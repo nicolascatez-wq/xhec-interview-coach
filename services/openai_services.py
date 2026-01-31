@@ -145,42 +145,42 @@ async def generate_debrief(transcript: List[Dict], mode: str) -> Dict:
     """
     # Format transcript for analysis
     formatted_transcript = "\n\n".join([
-        f"{'Coach' if item['role'] == 'assistant' else 'Candidat'}: {item['content']}"
+        f"{'Coach' if item['role'] == 'assistant' else 'Toi'}: {item['content']}"
         for item in transcript
     ])
     
-    prompt = f"""Tu viens de coacher un candidat pour son entretien X-HEC Entrepreneurs.
+    prompt = f"""Tu viens de coacher quelqu'un pour son entretien au Master X-HEC Entrepreneurs.
 Voici le transcript complet de la session :
 
 {formatted_transcript}
 
 ---
 
-Génère un DEBRIEF STRUCTURÉ en analysant les réponses du candidat.
+Génère un DEBRIEF STRUCTURÉ en t'adressant DIRECTEMENT à la personne (utilise "tu", pas "le candidat").
 
 Réponds en JSON avec EXACTEMENT ce format :
 {{
   "points_forts": [
     {{
       "titre": "Titre court du point fort",
-      "detail": "Explication avec exemple de la session"
+      "detail": "Explication en t'adressant directement à la personne (tu as bien fait de..., ta réponse sur...)"
     }}
   ],
   "points_amelioration": [
     {{
       "titre": "Titre court du point à améliorer", 
-      "detail": "Explication avec exemple de la session",
-      "conseil": "Conseil concret pour s'améliorer"
+      "detail": "Explication en t'adressant directement (tu devrais..., ta réponse manquait de...)",
+      "conseil": "Conseil concret en tutoyant"
     }}
   ],
   "note_globale": {{
     "score": "X/10",
-    "commentaire": "Appréciation globale en 2-3 phrases"
+    "commentaire": "Appréciation globale en 2-3 phrases en tutoyant"
   }},
-  "prochain_objectif": "Un objectif concret pour la prochaine session"
+  "prochain_objectif": "Un objectif concret pour ta prochaine session"
 }}
 
-Sois HONNÊTE et CONSTRUCTIF. Cite des exemples spécifiques de la session.
+IMPORTANT : Tutoie toujours, sois direct et bienveillant. Cite des exemples spécifiques de la session.
 """
     
     response = client.chat.completions.create(
@@ -238,17 +238,21 @@ async def get_question_feedback(question: str, response: str) -> str:
     Returns:
         Short, direct feedback
     """
-    prompt = f"""Analyse cette réponse d'entretien X-HEC et donne un feedback COURT et DIRECT.
+    prompt = f"""Tu es coach d'entretien pour le Master X-HEC Entrepreneurs (programme de HEC Paris pour les entrepreneurs).
+La personne que tu coaches postule UNIQUEMENT pour ce master X-HEC, pas pour un autre programme.
+
+Analyse cette réponse et donne un feedback COURT et DIRECT en tutoyant.
 
 Question posée : {question}
-Réponse du candidat : {response}
+Réponse : {response}
 
 Ton feedback doit :
 1. Dire si c'est bien ou pas (1 phrase)
 2. Pointer 1-2 problèmes spécifiques si présents
-3. Donner UN conseil concret
+3. Donner UN conseil concret pour l'entretien X-HEC
 
-MAX 4-5 phrases au total. Sois direct comme un vrai coach, pas de langue de bois.
+IMPORTANT : Reste focalisé sur le contexte X-HEC Entrepreneurs. Ne mentionne pas d'autres écoles ou programmes.
+MAX 4-5 phrases au total. Tutoie, sois direct comme un vrai coach.
 """
     
     response_obj = client.chat.completions.create(
@@ -294,7 +298,8 @@ R: {last_exchange.get('response', '')}
 Fais une transition naturelle (1 phrase max) puis pose la question suivante.
 """
     
-    prompt = f"""Tu es coach d'entretien. Choisis la prochaine question à poser.
+    prompt = f"""Tu es coach d'entretien pour le Master X-HEC Entrepreneurs (HEC Paris).
+Tu prépares quelqu'un à son entretien d'admission pour CE programme spécifiquement.
 
 Thème actuel : {theme}
 {context}
@@ -302,8 +307,8 @@ Thème actuel : {theme}
 Questions disponibles :
 {json.dumps(remaining, ensure_ascii=False)}
 
-Choisis UNE question pertinente et pose-la de manière naturelle, comme à l'oral.
-Si c'est la première question, présente brièvement le thème.
+Choisis UNE question et pose-la naturellement, comme à l'oral. Tutoie la personne.
+IMPORTANT : Reste focalisé sur X-HEC, ne mentionne pas d'autres écoles.
 """
     
     response = client.chat.completions.create(

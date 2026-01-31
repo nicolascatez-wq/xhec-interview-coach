@@ -365,6 +365,13 @@ body {
     background: var(--bg-hover);
 }
 
+.no-questions {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 40px;
+    font-style: italic;
+}
+
 /* ============ Interview View ============ */
 
 .interview-container {
@@ -477,6 +484,12 @@ body {
 .interview-controls {
     display: flex;
     gap: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.interview-controls .btn {
+    min-width: 180px;
 }
 
 /* ============ Debrief ============ */

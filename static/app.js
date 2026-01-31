@@ -1,7 +1,7 @@
 /**
  * X-HEC Interview Coach - Frontend Application
  * Sequential voice flow with Whisper + GPT-4 + TTS
- * v3.0
+ * v3.1 - Fixed flow
  */
 
 // ============ State Management ============
@@ -16,6 +16,10 @@ const state = {
     currentTheme: null,
     currentQuestions: [],
     currentQuestion: null,
+    
+    // Interview state
+    hasAnsweredCurrentQuestion: false,
+    questionsAnswered: 0,
     
     // Audio
     mediaRecorder: null,
@@ -65,7 +69,7 @@ const elements = {
     coachText: $('coachText'),
     voiceCircle: $('voiceCircle'),
     voiceStatus: $('voiceStatus'),
-    skipQuestionBtn: $('skipQuestionBtn'),
+    nextQuestionBtn: $('nextQuestionBtn'),
     endSessionBtn: $('endSessionBtn'),
     
     // Debrief
@@ -122,6 +126,14 @@ function setVoiceState(newState) {
         processing: 'Traitement en cours...'
     };
     elements.voiceStatus.textContent = statusTexts[newState] || '';
+}
+
+function updateNextQuestionButton() {
+    if (state.hasAnsweredCurrentQuestion) {
+        elements.nextQuestionBtn.textContent = 'Question suivante';
+    } else {
+        elements.nextQuestionBtn.textContent = 'Passer cette question';
+    }
 }
 
 // ============ Audio Functions ============
@@ -225,6 +237,11 @@ async function processUserAudio(audioBlob) {
         // Add to transcript
         state.transcript.push({ role: 'assistant', content: responseData.text });
         
+        // Mark that user has answered
+        state.hasAnsweredCurrentQuestion = true;
+        state.questionsAnswered++;
+        updateNextQuestionButton();
+        
         // 3. Display and play response
         elements.coachText.textContent = responseData.text;
         await playAudioBase64(responseData.audio_base64);
@@ -318,6 +335,12 @@ async function getThemes() {
     return res.json();
 }
 
+async function getThemeQuestions(theme) {
+    const res = await fetch(`/api/themes/${encodeURIComponent(theme)}/questions?session_id=${state.sessionId}`);
+    if (!res.ok) throw new Error('Failed to get questions');
+    return res.json();
+}
+
 async function selectTheme(theme) {
     const formData = new FormData();
     formData.append('theme', theme);
@@ -329,8 +352,8 @@ async function selectTheme(theme) {
     
     if (!res.ok) throw new Error('Failed to select theme');
     return res.json();
-    }
-    
+}
+
 async function selectQuestion(question = null, random = false) {
     const formData = new FormData();
     if (question) formData.append('question', question);
@@ -372,6 +395,11 @@ function renderThemes(themes) {
 
 function renderQuestions(questions) {
     elements.questionsList.innerHTML = '';
+    
+    if (questions.length === 0) {
+        elements.questionsList.innerHTML = '<p class="no-questions">Plus de questions disponibles dans ce thème</p>';
+        return;
+    }
     
     questions.forEach(question => {
         const item = document.createElement('div');
@@ -496,15 +524,19 @@ async function handleModeSelect(mode) {
             state.transcript.push({ role: 'assistant', content: introResult.text });
             elements.coachText.textContent = introResult.text;
             
+            // Reset question state for interview
+            state.hasAnsweredCurrentQuestion = false;
+            updateNextQuestionButton();
+            
             hideLoading();
             showStep('stepInterview');
             
             await playAudioBase64(introResult.audio_base64);
         }
-        } catch (error) {
-            hideLoading();
-            showToast(error.message);
-        }
+    } catch (error) {
+        hideLoading();
+        showToast(error.message);
+    }
 }
 
 async function handleThemeSelect(theme) {
@@ -513,18 +545,15 @@ async function handleThemeSelect(theme) {
     showLoading('Chargement des questions...');
     
     try {
-        const result = await selectTheme(theme);
-        state.currentQuestions = result.available_questions;
+        // Get available questions for this theme
+        const questionsResult = await getThemeQuestions(theme);
+        state.currentQuestions = questionsResult.questions;
         
         elements.selectedThemeTitle.textContent = theme;
         renderQuestions(state.currentQuestions);
-            
-            hideLoading();
-        showStep('stepQuestions');
         
-        // Play coach response
-        state.transcript.push({ role: 'assistant', content: result.text });
-        await playAudioBase64(result.audio_base64);
+        hideLoading();
+        showStep('stepQuestions');
         
     } catch (error) {
         hideLoading();
@@ -545,6 +574,9 @@ async function handleQuestionSelect(question) {
         }
         
         state.currentQuestion = result.question;
+        state.hasAnsweredCurrentQuestion = false;
+        updateNextQuestionButton();
+        
         elements.coachText.textContent = result.text;
         state.transcript.push({ role: 'assistant', content: result.text });
         
@@ -567,12 +599,21 @@ async function handleRandomQuestion() {
         
         if (!result.success) {
             hideLoading();
-            showToast(result.message);
-            showStep('stepThemes');
+            showToast(result.message || 'Plus de questions disponibles');
+            // Refresh the questions list
+            if (state.currentTheme) {
+                const questionsResult = await getThemeQuestions(state.currentTheme);
+                state.currentQuestions = questionsResult.questions;
+                renderQuestions(state.currentQuestions);
+            }
+            showStep('stepQuestions');
             return;
         }
         
         state.currentQuestion = result.question;
+        state.hasAnsweredCurrentQuestion = false;
+        updateNextQuestionButton();
+        
         elements.coachText.textContent = result.text;
         state.transcript.push({ role: 'assistant', content: result.text });
         
@@ -587,16 +628,35 @@ async function handleRandomQuestion() {
     }
 }
 
-async function handleSkipQuestion() {
-    if (state.mode === 'question_by_question') {
+async function handleNextQuestion() {
+    // Go back to question selection to choose next question
+    showLoading('Chargement...');
+    
+    try {
+        // Refresh questions list (to remove already asked ones)
+        const questionsResult = await getThemeQuestions(state.currentTheme);
+        state.currentQuestions = questionsResult.questions;
+        renderQuestions(state.currentQuestions);
+        
+        // Reset state for new question
+        state.currentQuestion = null;
+        state.hasAnsweredCurrentQuestion = false;
+        updateNextQuestionButton();
+        
+        hideLoading();
         showStep('stepQuestions');
-    } else {
-        // In full interview, skip just gets next question
-        await handleRandomQuestion();
+    } catch (error) {
+        hideLoading();
+        showToast(error.message);
     }
 }
 
 async function handleEndSession() {
+    if (state.questionsAnswered === 0) {
+        showToast('Réponds à au moins une question avant de terminer');
+        return;
+    }
+    
     showLoading('Génération du débrief...');
     
     try {
@@ -623,20 +683,20 @@ function handleDownloadTranscript() {
     text += '---\n\n';
     
     state.transcript.forEach(item => {
-        const role = item.role === 'assistant' ? 'Coach' : 'Vous';
+        const role = item.role === 'assistant' ? 'Coach' : 'Moi';
         text += `[${role}]\n${item.content}\n\n`;
     });
     
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `xhec-interview-${new Date().toISOString().split('T')[0]}.txt`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `xhec-interview-${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
 function handleNewSession() {
     // Reset state
@@ -647,6 +707,8 @@ function handleNewSession() {
     state.currentTheme = null;
     state.currentQuestions = [];
     state.currentQuestion = null;
+    state.hasAnsweredCurrentQuestion = false;
+    state.questionsAnswered = 0;
     state.transcript = [];
     
     // Stop media recorder
@@ -699,7 +761,7 @@ elements.randomQuestionBtn.addEventListener('click', handleRandomQuestion);
 elements.voiceCircle.addEventListener('click', toggleRecording);
 
 // Interview controls
-elements.skipQuestionBtn.addEventListener('click', handleSkipQuestion);
+elements.nextQuestionBtn.addEventListener('click', handleNextQuestion);
 elements.endSessionBtn.addEventListener('click', handleEndSession);
 
 // Debrief
@@ -709,6 +771,6 @@ elements.newSession.addEventListener('click', handleNewSession);
 // ============ Initialization ============
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎯 X-HEC Interview Coach v3.0');
+    console.log('🎯 X-HEC Interview Coach v3.1');
     showStep('stepUpload');
 });
