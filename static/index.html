@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>X-HEC Interview Coach</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">🎯</span>
+                <h1>X-HEC Coach</h1>
+            </div>
+            <div class="header-status" id="connectionStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">Prêt</span>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Step 1: Upload -->
+            <section class="step step-upload active" id="stepUpload">
+                <div class="step-header">
+                    <span class="step-number">1</span>
+                    <h2>Upload ton dossier de candidature</h2>
+                </div>
+                <div class="step-content">
+                    <p class="step-description">
+                        Charge ton dossier de candidature (PDF) contenant ton CV et tes réponses aux questions de candidature.
+                    </p>
+                    
+                    <form id="uploadForm" class="upload-form">
+                        <div class="upload-zone upload-zone-large" id="dossierZone">
+                            <input type="file" id="dossierInput" accept=".pdf" required>
+                            <label for="dossierInput" class="upload-label">
+                                <span class="upload-icon">📁</span>
+                                <span class="upload-text">Dossier de candidature (PDF)</span>
+                                <span class="upload-hint">CV + Réponses aux questions de candidature</span>
+                                <span class="upload-status" id="dossierStatus">Aucun fichier sélectionné</span>
+                            </label>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary" id="uploadBtn" disabled>
+                            Charger mon dossier
+                        </button>
+                    </form>
+                    
+                    <div class="upload-preview" id="uploadPreview" style="display: none;">
+                        <div class="preview-card">
+                            <h4>✅ Dossier chargé</h4>
+                            <p><strong>Questions disponibles:</strong> <span id="questionsCount">0</span> questions d'entretien prêtes</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Step 2: Mode Selection -->
+            <section class="step step-mode" id="stepMode" style="display: none;">
+                <div class="step-header">
+                    <span class="step-number">2</span>
+                    <h2>Choisis ton mode</h2>
+                </div>
+                <div class="step-content">
+                    <div class="mode-cards">
+                        <div class="mode-card" data-mode="question_by_question">
+                            <div class="mode-icon">🎯</div>
+                            <h3>Question par Question</h3>
+                            <p>Entraîne-toi question par question avec un feedback immédiat après chaque réponse.</p>
+                            <ul class="mode-features">
+                                <li>✓ Feedback immédiat</li>
+                                <li>✓ Arrête quand tu veux</li>
+                                <li>✓ Idéal pour débuter</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="mode-card" data-mode="full_interview">
+                            <div class="mode-icon">⏱️</div>
+                            <h3>Simulation 20 min</h3>
+                            <p>Entretien complet de 20 minutes avec debrief global à la fin.</p>
+                            <ul class="mode-features">
+                                <li>✓ Conditions réelles</li>
+                                <li>✓ 8-10 questions enchaînées</li>
+                                <li>✓ Debrief complet à la fin</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Step 3: Interview -->
+            <section class="step step-interview" id="stepInterview" style="display: none;">
+                <div class="interview-container">
+                    <!-- Coach Display -->
+                    <div class="coach-section">
+                        <div class="coach-avatar">
+                            <div class="avatar-circle" id="coachAvatar">
+                                <span>🎓</span>
+                            </div>
+                            <div class="speaking-indicator" id="coachSpeaking" style="display: none;">
+                                <span></span><span></span><span></span>
+                            </div>
+                        </div>
+                        <div class="coach-message" id="coachMessage">
+                            <p>Bienvenue ! Commence par te présenter en 2-3 minutes. Qui es-tu, ton parcours, et pourquoi X-HEC ?</p>
+                        </div>
+                    </div>
+
+                    <!-- Current Question Display -->
+                    <div class="question-display" id="questionDisplay" style="display: none;">
+                        <span class="question-label">Question en cours</span>
+                        <p class="question-text" id="currentQuestion"></p>
+                    </div>
+
+                    <!-- Voice Controls -->
+                    <div class="voice-controls">
+                        <button class="btn-voice" id="voiceBtn">
+                            <span class="voice-icon">🎤</span>
+                            <span class="voice-text">Appuie pour parler</span>
+                        </button>
+                        <div class="voice-status" id="voiceStatus">
+                            <span class="status-text">Prêt à écouter</span>
+                        </div>
+                    </div>
+
+                    <!-- Transcript -->
+                    <div class="transcript-box" id="transcriptBox" style="display: none;">
+                        <div class="transcript-header">
+                            <span>📝 Ta réponse</span>
+                            <button class="btn-small" id="clearTranscript">Effacer</button>
+                        </div>
+                        <p class="transcript-text" id="transcriptText"></p>
+                        <button class="btn btn-secondary" id="submitResponse" style="display: none;">
+                            Valider ma réponse
+                        </button>
+                    </div>
+
+                    <!-- Feedback Display (Mode 1) -->
+                    <div class="feedback-box" id="feedbackBox" style="display: none;">
+                        <div class="feedback-header">
+                            <span>💬 Feedback</span>
+                        </div>
+                        <p class="feedback-text" id="feedbackText"></p>
+                        <button class="btn btn-primary" id="nextQuestionBtn">
+                            Question suivante
+                        </button>
+                    </div>
+
+                    <!-- Progress Bar -->
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                        <span class="progress-text" id="progressText">0 / 0 questions</span>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary" id="endSessionBtn">
+                            Terminer la session
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Step 4: Summary -->
+            <section class="step step-summary" id="stepSummary" style="display: none;">
+                <div class="step-header">
+                    <span class="step-number">✓</span>
+                    <h2>Résumé de ta session</h2>
+                </div>
+                <div class="step-content">
+                    <div class="summary-card">
+                        <div class="summary-stats">
+                            <div class="stat">
+                                <span class="stat-value" id="summaryQuestionsCount">0</span>
+                                <span class="stat-label">Questions</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-value" id="summaryMode">-</span>
+                                <span class="stat-label">Mode</span>
+                            </div>
+                        </div>
+                        
+                        <div class="summary-content" id="summaryContent">
+                            <p>Chargement du résumé...</p>
+                        </div>
+                        
+                        <div class="summary-actions">
+                            <button class="btn btn-secondary" id="downloadTranscript">
+                                📥 Télécharger le transcript
+                            </button>
+                            <button class="btn btn-primary" id="newSession">
+                                🔄 Nouvelle session
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Entraîne-toi comme si c'était le jour J 🚀</p>
+        </footer>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+        <div class="loading-spinner"></div>
+        <p class="loading-text" id="loadingText">Chargement...</p>
+    </div>
+
+    <!-- Error Toast -->
+    <div class="toast" id="toast" style="display: none;">
+        <span class="toast-icon">⚠️</span>
+        <span class="toast-message" id="toastMessage"></span>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
