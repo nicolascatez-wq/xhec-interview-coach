@@ -1,6 +1,6 @@
 /**
  * X-HEC Interview Coach - Frontend Application
- * Voice-to-voice interview training with Web Speech API
+ * Real-time voice-to-voice with OpenAI Realtime API
  */
 
 // ============ State Management ============
@@ -13,17 +13,27 @@ const state = {
     // Session
     sessionId: null,
     mode: null,
-    presentationDone: false,
-    currentQuestion: null,
-    questionsAnswered: 0,
-    totalQuestions: 0,
+    questionsCount: 0,
     
-    // Voice
+    // WebSocket & Audio
+    websocket: null,
+    audioContext: null,
+    mediaStream: null,
+    audioWorklet: null,
+    isConnected: false,
     isRecording: false,
-    currentTranscript: '',
-    recognition: null,
-    synthesis: window.speechSynthesis
+    isSpeaking: false,
+    
+    // Audio playback
+    audioQueue: [],
+    isPlaying: false,
+    
+    // Transcript
+    transcript: []
 };
+
+// ============ Audio Configuration ============
+const SAMPLE_RATE = 24000; // OpenAI Realtime uses 24kHz
 
 // ============ DOM Elements ============
 const elements = {
@@ -49,19 +59,10 @@ const elements = {
     coachMessage: document.getElementById('coachMessage'),
     coachAvatar: document.getElementById('coachAvatar'),
     coachSpeaking: document.getElementById('coachSpeaking'),
-    questionDisplay: document.getElementById('questionDisplay'),
-    currentQuestion: document.getElementById('currentQuestion'),
     voiceBtn: document.getElementById('voiceBtn'),
     voiceStatus: document.getElementById('voiceStatus'),
     transcriptBox: document.getElementById('transcriptBox'),
     transcriptText: document.getElementById('transcriptText'),
-    clearTranscript: document.getElementById('clearTranscript'),
-    submitResponse: document.getElementById('submitResponse'),
-    feedbackBox: document.getElementById('feedbackBox'),
-    feedbackText: document.getElementById('feedbackText'),
-    nextQuestionBtn: document.getElementById('nextQuestionBtn'),
-    progressFill: document.getElementById('progressFill'),
-    progressText: document.getElementById('progressText'),
     endSessionBtn: document.getElementById('endSessionBtn'),
     
     // Summary
@@ -99,141 +100,257 @@ function showToast(message, duration = 4000) {
 }
 
 function showStep(stepElement) {
-    // Hide all steps
     [elements.stepUpload, elements.stepMode, elements.stepInterview, elements.stepSummary].forEach(step => {
         step.style.display = 'none';
     });
-    // Show target step
     stepElement.style.display = 'block';
 }
 
-function updateProgress() {
-    const percent = state.totalQuestions > 0 
-        ? (state.questionsAnswered / state.totalQuestions) * 100 
-        : 0;
-    elements.progressFill.style.width = `${percent}%`;
-    elements.progressText.textContent = `${state.questionsAnswered} / ${state.totalQuestions} questions`;
+function updateConnectionStatus(status, text) {
+    const dot = elements.connectionStatus.querySelector('.status-dot');
+    const textEl = elements.connectionStatus.querySelector('.status-text');
+    
+    dot.style.background = status === 'connected' ? 'var(--success)' : 
+                           status === 'connecting' ? 'var(--warning)' : 'var(--error)';
+    textEl.textContent = text;
 }
 
-// ============ Web Speech API - Speech Recognition ============
-
-function initSpeechRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+function addToTranscript(role, text) {
+    state.transcript.push({ role, text, timestamp: new Date() });
     
-    if (!SpeechRecognition) {
-        showToast('⚠️ La reconnaissance vocale n\'est pas supportée par ce navigateur. Utilisez Chrome ou Edge.');
+    // Update UI
+    const roleLabel = role === 'assistant' ? '🎓 Coach' : '👤 Vous';
+    const entry = document.createElement('div');
+    entry.className = `transcript-entry transcript-${role}`;
+    entry.innerHTML = `<strong>${roleLabel}:</strong> ${text}`;
+    
+    if (!elements.transcriptBox.querySelector('.transcript-entries')) {
+        elements.transcriptBox.innerHTML = '<div class="transcript-entries"></div>';
+    }
+    elements.transcriptBox.querySelector('.transcript-entries').appendChild(entry);
+    elements.transcriptBox.scrollTop = elements.transcriptBox.scrollHeight;
+}
+
+// ============ Audio Handling ============
+
+async function initAudio() {
+    try {
+        // Request microphone access
+        state.mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                sampleRate: SAMPLE_RATE,
+                channelCount: 1,
+                echoCancellation: true,
+                noiseSuppression: true
+            }
+        });
+        
+        // Create audio context
+        state.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+        
+        // Load audio worklet for processing
+        await state.audioContext.audioWorklet.addModule('/static/audio-processor.js');
+        
+        console.log('✅ Audio initialized');
+        return true;
+        
+    } catch (error) {
+        console.error('❌ Audio init failed:', error);
+        showToast('Erreur: Impossible d\'accéder au microphone. Vérifiez les permissions.');
         return false;
     }
+}
+
+function startRecording() {
+    if (!state.mediaStream || !state.audioContext || !state.websocket) return;
     
-    state.recognition = new SpeechRecognition();
-    state.recognition.lang = 'fr-FR';
-    state.recognition.continuous = true;
-    state.recognition.interimResults = true;
+    const source = state.audioContext.createMediaStreamSource(state.mediaStream);
+    state.audioWorklet = new AudioWorkletNode(state.audioContext, 'audio-processor');
     
-    state.recognition.onstart = () => {
-        state.isRecording = true;
+    state.audioWorklet.port.onmessage = (event) => {
+        if (state.isRecording && state.websocket?.readyState === WebSocket.OPEN) {
+            // Convert Float32 to Int16 PCM
+            const float32Data = event.data;
+            const int16Data = new Int16Array(float32Data.length);
+            
+            for (let i = 0; i < float32Data.length; i++) {
+                const s = Math.max(-1, Math.min(1, float32Data[i]));
+                int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            
+            // Send as base64
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(int16Data.buffer)));
+            state.websocket.send(JSON.stringify({ type: 'audio', data: base64 }));
+        }
+    };
+    
+    source.connect(state.audioWorklet);
+    state.audioWorklet.connect(state.audioContext.destination);
+    
+    state.isRecording = true;
+    updateVoiceUI(true);
+}
+
+function stopRecording() {
+    if (state.audioWorklet) {
+        state.audioWorklet.disconnect();
+        state.audioWorklet = null;
+    }
+    state.isRecording = false;
+    updateVoiceUI(false);
+    
+    // Commit audio buffer
+    if (state.websocket?.readyState === WebSocket.OPEN) {
+        state.websocket.send(JSON.stringify({ type: 'commit' }));
+    }
+}
+
+function updateVoiceUI(recording) {
+    if (recording) {
         elements.voiceBtn.classList.add('recording');
         elements.voiceBtn.querySelector('.voice-text').textContent = 'En écoute...';
-        elements.voiceStatus.querySelector('.status-text').textContent = '🔴 Enregistrement en cours';
-        elements.transcriptBox.style.display = 'block';
-    };
-    
-    state.recognition.onresult = (event) => {
-        let finalTranscript = '';
-        let interimTranscript = '';
-        
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-                finalTranscript += transcript + ' ';
-            } else {
-                interimTranscript += transcript;
-            }
-        }
-        
-        if (finalTranscript) {
-            state.currentTranscript += finalTranscript;
-        }
-        
-        elements.transcriptText.textContent = state.currentTranscript + interimTranscript;
-        
-        // Show submit button when we have content
-        if (state.currentTranscript.trim().length > 10) {
-            elements.submitResponse.style.display = 'block';
-        }
-    };
-    
-    state.recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        if (event.error === 'no-speech') {
-            elements.voiceStatus.querySelector('.status-text').textContent = 'Pas de parole détectée. Réessayez.';
-        } else {
-            showToast(`Erreur de reconnaissance: ${event.error}`);
-        }
-    };
-    
-    state.recognition.onend = () => {
-        state.isRecording = false;
+        elements.voiceStatus.querySelector('.status-text').textContent = '🔴 Parlez maintenant';
+    } else {
         elements.voiceBtn.classList.remove('recording');
         elements.voiceBtn.querySelector('.voice-text').textContent = 'Appuie pour parler';
-        elements.voiceStatus.querySelector('.status-text').textContent = 'Prêt à écouter';
-    };
-    
-    return true;
-}
-
-function toggleRecording() {
-    if (state.isRecording) {
-        state.recognition.stop();
-    } else {
-        state.currentTranscript = '';
-        elements.transcriptText.textContent = '';
-        elements.submitResponse.style.display = 'none';
-        state.recognition.start();
+        elements.voiceStatus.querySelector('.status-text').textContent = 'Prêt';
     }
 }
 
-// ============ Web Speech API - Text to Speech ============
+// ============ Audio Playback ============
 
-function speak(text, onEnd = null) {
-    // Stop any ongoing speech
-    state.synthesis.cancel();
+async function playAudioChunk(base64Audio) {
+    if (!state.audioContext) return;
     
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'fr-FR';
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-    
-    // Try to find a French voice
-    const voices = state.synthesis.getVoices();
-    const frenchVoice = voices.find(v => v.lang.startsWith('fr')) || voices[0];
-    if (frenchVoice) {
-        utterance.voice = frenchVoice;
+    // Decode base64 to Int16 PCM
+    const binaryString = atob(base64Audio);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
     }
     
-    utterance.onstart = () => {
-        elements.coachSpeaking.style.display = 'flex';
-    };
+    // Convert Int16 to Float32 for Web Audio
+    const int16 = new Int16Array(bytes.buffer);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 0x8000;
+    }
     
-    utterance.onend = () => {
-        elements.coachSpeaking.style.display = 'none';
-        if (onEnd) onEnd();
-    };
+    // Create audio buffer
+    const audioBuffer = state.audioContext.createBuffer(1, float32.length, SAMPLE_RATE);
+    audioBuffer.copyToChannel(float32, 0);
     
-    utterance.onerror = (event) => {
-        console.error('Speech synthesis error:', event);
-        elements.coachSpeaking.style.display = 'none';
-        if (onEnd) onEnd();
-    };
+    // Queue for playback
+    state.audioQueue.push(audioBuffer);
     
-    state.synthesis.speak(utterance);
+    if (!state.isPlaying) {
+        playNextInQueue();
+    }
 }
 
-// Load voices when available
-if (state.synthesis) {
-    state.synthesis.onvoiceschanged = () => {
-        console.log('Voices loaded:', state.synthesis.getVoices().length);
+function playNextInQueue() {
+    if (state.audioQueue.length === 0) {
+        state.isPlaying = false;
+        state.isSpeaking = false;
+        elements.coachSpeaking.style.display = 'none';
+        return;
+    }
+    
+    state.isPlaying = true;
+    state.isSpeaking = true;
+    elements.coachSpeaking.style.display = 'flex';
+    
+    const buffer = state.audioQueue.shift();
+    const source = state.audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(state.audioContext.destination);
+    source.onended = playNextInQueue;
+    source.start();
+}
+
+function interruptPlayback() {
+    state.audioQueue = [];
+    state.isPlaying = false;
+    state.isSpeaking = false;
+    elements.coachSpeaking.style.display = 'none';
+    
+    if (state.websocket?.readyState === WebSocket.OPEN) {
+        state.websocket.send(JSON.stringify({ type: 'interrupt' }));
+    }
+}
+
+// ============ WebSocket Connection ============
+
+function connectWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/interview/${state.sessionId}`;
+    
+    updateConnectionStatus('connecting', 'Connexion...');
+    
+    state.websocket = new WebSocket(wsUrl);
+    
+    state.websocket.onopen = () => {
+        console.log('✅ WebSocket connected');
+        state.isConnected = true;
+        updateConnectionStatus('connected', 'Connecté');
+        
+        // Show interview step
+        showStep(elements.stepInterview);
+        hideLoading();
+        
+        // Update coach message
+        elements.coachMessage.querySelector('p').textContent = 
+            "Je suis connecté ! Appuie sur le micro et présente-toi en 2-3 minutes. Qui es-tu, ton parcours, et pourquoi X-HEC ?";
     };
+    
+    state.websocket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        switch (data.type) {
+            case 'audio':
+                playAudioChunk(data.data);
+                break;
+                
+            case 'transcript':
+                if (data.text && data.text.trim()) {
+                    addToTranscript(data.role, data.text);
+                    if (data.role === 'assistant') {
+                        elements.coachMessage.querySelector('p').textContent = data.text;
+                    }
+                }
+                break;
+                
+            case 'status':
+                console.log('Status:', data.status);
+                break;
+                
+            case 'error':
+                console.error('Server error:', data.message);
+                showToast(`Erreur: ${data.message}`);
+                break;
+        }
+    };
+    
+    state.websocket.onclose = () => {
+        console.log('WebSocket closed');
+        state.isConnected = false;
+        updateConnectionStatus('disconnected', 'Déconnecté');
+    };
+    
+    state.websocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        updateConnectionStatus('error', 'Erreur connexion');
+        showToast('Erreur de connexion au serveur');
+    };
+}
+
+function disconnectWebSocket() {
+    if (state.websocket) {
+        state.websocket.send(JSON.stringify({ type: 'end' }));
+        state.websocket.close();
+        state.websocket = null;
+    }
+    state.isConnected = false;
 }
 
 // ============ API Functions ============
@@ -255,101 +372,19 @@ async function uploadDossier() {
     return response.json();
 }
 
-async function createSession(mode) {
+async function prepareSession(mode) {
     const formData = new FormData();
     formData.append('mode', mode);
     formData.append('dossier_text', state.dossierText);
     
-    const response = await fetch('/api/session/create', {
+    const response = await fetch('/api/session/prepare', {
         method: 'POST',
         body: formData
     });
     
     if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.detail || 'Session creation failed');
-    }
-    
-    return response.json();
-}
-
-async function startInterview(presentation) {
-    const response = await fetch('/api/interview/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            session_id: state.sessionId,
-            message: presentation
-        })
-    });
-    
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to start interview');
-    }
-    
-    return response.json();
-}
-
-async function submitResponseAPI(question, response_text) {
-    const response = await fetch('/api/interview/respond', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            session_id: state.sessionId,
-            question: question,
-            response: response_text
-        })
-    });
-    
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to submit response');
-    }
-    
-    return response.json();
-}
-
-async function getNextQuestion() {
-    const formData = new FormData();
-    formData.append('session_id', state.sessionId);
-    
-    const response = await fetch('/api/interview/next-question', {
-        method: 'POST',
-        body: formData
-    });
-    
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to get next question');
-    }
-    
-    return response.json();
-}
-
-async function getSummary() {
-    const formData = new FormData();
-    formData.append('session_id', state.sessionId);
-    
-    const response = await fetch('/api/interview/summary', {
-        method: 'POST',
-        body: formData
-    });
-    
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to get summary');
-    }
-    
-    return response.json();
-}
-
-async function getTranscript() {
-    const response = await fetch(`/api/interview/transcript/${state.sessionId}`);
-    
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to get transcript');
+        throw new Error(error.detail || 'Session preparation failed');
     }
     
     return response.json();
@@ -378,18 +413,15 @@ elements.uploadForm.addEventListener('submit', async (e) => {
     try {
         const result = await uploadDossier();
         
-        // Store parsed data
         state.dossierText = result._dossier_text;
         state.questionsList = result._questions_list;
-        state.totalQuestions = result.questions_count;
+        state.questionsCount = result.questions_count;
         
-        // Show preview
         elements.questionsCount.textContent = result.questions_count;
         elements.uploadPreview.style.display = 'block';
         
         hideLoading();
         
-        // Move to mode selection after short delay
         setTimeout(() => {
             showStep(elements.stepMode);
         }, 1000);
@@ -403,35 +435,28 @@ elements.uploadForm.addEventListener('submit', async (e) => {
 // Mode Selection
 elements.modeCards.forEach(card => {
     card.addEventListener('click', async () => {
-        // Visual selection
         elements.modeCards.forEach(c => c.classList.remove('selected'));
         card.classList.add('selected');
         
         const mode = card.dataset.mode;
         state.mode = mode;
         
-        showLoading('Préparation de la session...');
+        showLoading('Connexion au coach IA...');
         
         try {
-            const result = await createSession(mode);
-            state.sessionId = result.session_id;
-            state.totalQuestions = result.questions_count;
-            
-            hideLoading();
-            
-            // Initialize speech recognition
-            if (!initSpeechRecognition()) {
-                showToast('Reconnaissance vocale non disponible. Vous pouvez toujours utiliser l\'app en mode texte.');
+            // Initialize audio
+            const audioReady = await initAudio();
+            if (!audioReady) {
+                hideLoading();
+                return;
             }
             
-            // Move to interview
-            showStep(elements.stepInterview);
-            updateProgress();
+            // Prepare session
+            const result = await prepareSession(mode);
+            state.sessionId = result.session_id;
             
-            // Welcome message
-            const welcomeMsg = "Bienvenue ! Commence par te présenter en 2-3 minutes. Qui es-tu, ton parcours, et pourquoi X-HEC ?";
-            elements.coachMessage.querySelector('p').textContent = welcomeMsg;
-            speak(welcomeMsg);
+            // Connect WebSocket
+            connectWebSocket();
             
         } catch (error) {
             hideLoading();
@@ -440,202 +465,98 @@ elements.modeCards.forEach(card => {
     });
 });
 
-// Voice Button
-elements.voiceBtn.addEventListener('click', () => {
-    if (!state.recognition) {
-        showToast('Reconnaissance vocale non initialisée');
-        return;
-    }
-    toggleRecording();
-});
-
-// Clear Transcript
-elements.clearTranscript.addEventListener('click', () => {
-    state.currentTranscript = '';
-    elements.transcriptText.textContent = '';
-    elements.submitResponse.style.display = 'none';
-});
-
-// Submit Response
-elements.submitResponse.addEventListener('click', async () => {
-    if (!state.currentTranscript.trim()) {
-        showToast('Enregistre d\'abord ta réponse');
+// Voice Button - Push to talk
+elements.voiceBtn.addEventListener('mousedown', () => {
+    if (!state.isConnected) {
+        showToast('Non connecté au serveur');
         return;
     }
     
-    // Stop recording if still going
+    // Interrupt AI if speaking
+    if (state.isSpeaking) {
+        interruptPlayback();
+    }
+    
+    startRecording();
+});
+
+elements.voiceBtn.addEventListener('mouseup', () => {
     if (state.isRecording) {
-        state.recognition.stop();
-    }
-    
-    showLoading('Analyse de ta réponse...');
-    
-    try {
-        if (!state.presentationDone) {
-            // This is the presentation
-            const result = await startInterview(state.currentTranscript);
-            state.presentationDone = true;
-            
-            hideLoading();
-            
-            // Extract question from coach response
-            const coachResponse = result.coach_response;
-            elements.coachMessage.querySelector('p').textContent = coachResponse;
-            
-            // Extract and display the question part
-            state.currentQuestion = extractQuestion(coachResponse);
-            if (state.currentQuestion) {
-                elements.questionDisplay.style.display = 'block';
-                elements.currentQuestion.textContent = state.currentQuestion;
-            }
-            
-            // Clear transcript for next response
-            state.currentTranscript = '';
-            elements.transcriptText.textContent = '';
-            elements.submitResponse.style.display = 'none';
-            
-            // Speak the response
-            speak(coachResponse);
-            
-        } else {
-            // This is a response to a question
-            const question = state.currentQuestion || 'Question précédente';
-            const result = await submitResponseAPI(question, state.currentTranscript);
-            
-            state.questionsAnswered = result.questions_answered;
-            updateProgress();
-            
-            hideLoading();
-            
-            if (state.mode === 'question_by_question' && result.feedback) {
-                // Show feedback for Mode 1
-                elements.feedbackBox.style.display = 'block';
-                elements.feedbackText.textContent = result.feedback;
-                speak(result.feedback);
-            } else {
-                // Mode 2 - just move to next question
-                await loadNextQuestion();
-            }
-            
-            // Clear transcript
-            state.currentTranscript = '';
-            elements.transcriptText.textContent = '';
-            elements.submitResponse.style.display = 'none';
-        }
-        
-    } catch (error) {
-        hideLoading();
-        showToast(error.message);
+        stopRecording();
     }
 });
 
-// Next Question Button (Mode 1)
-elements.nextQuestionBtn.addEventListener('click', async () => {
-    elements.feedbackBox.style.display = 'none';
-    await loadNextQuestion();
+elements.voiceBtn.addEventListener('mouseleave', () => {
+    if (state.isRecording) {
+        stopRecording();
+    }
 });
 
-async function loadNextQuestion() {
-    showLoading('Question suivante...');
-    
-    try {
-        const result = await getNextQuestion();
-        
-        hideLoading();
-        
-        if (result.interview_complete) {
-            // Interview is done, go to summary
-            await showSummary();
-        } else {
-            // Display next question
-            const nextQ = result.question;
-            elements.coachMessage.querySelector('p').textContent = nextQ;
-            
-            state.currentQuestion = extractQuestion(nextQ);
-            if (state.currentQuestion) {
-                elements.questionDisplay.style.display = 'block';
-                elements.currentQuestion.textContent = state.currentQuestion;
-            }
-            
-            speak(nextQ);
-        }
-        
-    } catch (error) {
-        hideLoading();
-        showToast(error.message);
+// Touch support for mobile
+elements.voiceBtn.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (!state.isConnected) {
+        showToast('Non connecté au serveur');
+        return;
     }
-}
+    
+    if (state.isSpeaking) {
+        interruptPlayback();
+    }
+    
+    startRecording();
+});
 
-function extractQuestion(text) {
-    // Try to extract just the question from coach's response
-    const lines = text.split('\n').filter(l => l.trim());
-    const questionLine = lines.find(l => l.includes('?'));
-    return questionLine || text.substring(0, 200);
-}
+elements.voiceBtn.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    if (state.isRecording) {
+        stopRecording();
+    }
+});
 
 // End Session
 elements.endSessionBtn.addEventListener('click', async () => {
     if (confirm('Veux-tu vraiment terminer la session ?')) {
-        await showSummary();
+        disconnectWebSocket();
+        showSummary();
     }
 });
 
-async function showSummary() {
-    showLoading('Génération du résumé...');
+function showSummary() {
+    elements.summaryQuestionsCount.textContent = state.transcript.filter(t => t.role === 'assistant').length;
+    elements.summaryMode.textContent = state.mode === 'question_by_question' ? 'Q&R' : '20 min';
     
-    try {
-        const result = await getSummary();
-        
-        hideLoading();
-        
-        // Update summary display
-        elements.summaryQuestionsCount.textContent = state.questionsAnswered;
-        elements.summaryMode.textContent = state.mode === 'question_by_question' 
-            ? 'Q&R' 
-            : '20 min';
-        elements.summaryContent.innerHTML = formatMarkdown(result.summary);
-        
-        showStep(elements.stepSummary);
-        
-    } catch (error) {
-        hideLoading();
-        showToast(error.message);
-        // Still show summary step even if summary generation failed
-        showStep(elements.stepSummary);
-        elements.summaryContent.textContent = 'Impossible de générer le résumé. Télécharge le transcript pour voir tes échanges.';
-    }
-}
-
-function formatMarkdown(text) {
-    // Basic markdown formatting
-    return text
-        .replace(/## (.*)/g, '<h2>$1</h2>')
-        .replace(/### (.*)/g, '<h3>$1</h3>')
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/- (.*)/g, '<li>$1</li>')
-        .replace(/\n\n/g, '</p><p>')
-        .replace(/\n/g, '<br>');
+    // Format transcript for summary
+    let summaryHtml = '<h3>Transcript de la session</h3>';
+    state.transcript.forEach(item => {
+        const role = item.role === 'assistant' ? '🎓 Coach' : '👤 Vous';
+        summaryHtml += `<p><strong>${role}:</strong> ${item.text}</p>`;
+    });
+    
+    elements.summaryContent.innerHTML = summaryHtml;
+    showStep(elements.stepSummary);
 }
 
 // Download Transcript
-elements.downloadTranscript.addEventListener('click', async () => {
-    try {
-        const result = await getTranscript();
-        
-        // Create download
-        const blob = new Blob([result.transcript], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `xhec-interview-${new Date().toISOString().split('T')[0]}.txt`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        
-    } catch (error) {
-        showToast(error.message);
-    }
+elements.downloadTranscript.addEventListener('click', () => {
+    let text = '=== X-HEC Interview Coach - Transcript ===\n\n';
+    text += `Date: ${new Date().toLocaleDateString('fr-FR')}\n`;
+    text += `Mode: ${state.mode}\n\n`;
+    
+    state.transcript.forEach(item => {
+        const role = item.role === 'assistant' ? 'Coach' : 'Vous';
+        text += `${role}: ${item.text}\n\n`;
+    });
+    
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `xhec-interview-${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 });
 
 // New Session
@@ -646,11 +567,18 @@ elements.newSession.addEventListener('click', () => {
     state.questionsList = [];
     state.sessionId = null;
     state.mode = null;
-    state.presentationDone = false;
-    state.currentQuestion = null;
-    state.questionsAnswered = 0;
-    state.totalQuestions = 0;
-    state.currentTranscript = '';
+    state.transcript = [];
+    state.audioQueue = [];
+    
+    // Cleanup audio
+    if (state.mediaStream) {
+        state.mediaStream.getTracks().forEach(track => track.stop());
+        state.mediaStream = null;
+    }
+    if (state.audioContext) {
+        state.audioContext.close();
+        state.audioContext = null;
+    }
     
     // Reset UI
     elements.dossierStatus.textContent = 'Aucun fichier sélectionné';
@@ -659,22 +587,15 @@ elements.newSession.addEventListener('click', () => {
     elements.uploadBtn.disabled = true;
     elements.uploadPreview.style.display = 'none';
     elements.modeCards.forEach(c => c.classList.remove('selected'));
-    elements.questionDisplay.style.display = 'none';
-    elements.transcriptBox.style.display = 'none';
-    elements.feedbackBox.style.display = 'none';
+    elements.transcriptBox.innerHTML = '';
     
+    updateConnectionStatus('disconnected', 'Prêt');
     showStep(elements.stepUpload);
 });
 
 // ============ Initialization ============
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎯 X-HEC Interview Coach initialized');
-    
-    // Check browser compatibility
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-        elements.connectionStatus.querySelector('.status-dot').style.background = 'var(--warning)';
-        elements.connectionStatus.querySelector('.status-text').textContent = 'Voice limité';
-    }
+    console.log('🎯 X-HEC Interview Coach v2.0 (OpenAI Realtime)');
+    updateConnectionStatus('disconnected', 'Prêt');
 });

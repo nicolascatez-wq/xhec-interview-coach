@@ -1,11 +1,24 @@
-mistralai
+# X-HEC Interview Coach v2.0
+# OpenAI Realtime API + FastAPI
+
+# Web framework
 fastapi
 uvicorn[standard]
 python-multipart
+aiofiles
+
+# OpenAI
+openai
+websockets
+
+# File parsing
 PyPDF2
 pandas
 openpyxl
+
+# Web scraping (for pineurs.com context)
 beautifulsoup4
 requests
+
+# Environment
 python-dotenv
-aiofiles

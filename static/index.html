@@ -91,6 +91,10 @@
                             </ul>
                         </div>
                     </div>
+                    
+                    <div class="mode-note">
+                        <p>💡 <strong>Nouveau :</strong> Conversation en temps réel avec le coach IA. Parle naturellement, il peut t'interrompre !</p>
+                    </div>
                 </div>
             </section>
 
@@ -108,54 +112,27 @@
                             </div>
                         </div>
                         <div class="coach-message" id="coachMessage">
-                            <p>Bienvenue ! Commence par te présenter en 2-3 minutes. Qui es-tu, ton parcours, et pourquoi X-HEC ?</p>
+                            <p>Connexion au coach IA...</p>
                         </div>
-                    </div>
-
-                    <!-- Current Question Display -->
-                    <div class="question-display" id="questionDisplay" style="display: none;">
-                        <span class="question-label">Question en cours</span>
-                        <p class="question-text" id="currentQuestion"></p>
                     </div>
 
                     <!-- Voice Controls -->
                     <div class="voice-controls">
                         <button class="btn-voice" id="voiceBtn">
                             <span class="voice-icon">🎤</span>
-                            <span class="voice-text">Appuie pour parler</span>
+                            <span class="voice-text">Maintiens pour parler</span>
                         </button>
                         <div class="voice-status" id="voiceStatus">
-                            <span class="status-text">Prêt à écouter</span>
+                            <span class="status-text">Prêt</span>
                         </div>
+                        <p class="voice-hint">Maintiens le bouton enfoncé pour parler, relâche quand tu as fini.</p>
                     </div>
 
-                    <!-- Transcript -->
-                    <div class="transcript-box" id="transcriptBox" style="display: none;">
+                    <!-- Live Transcript -->
+                    <div class="transcript-box" id="transcriptBox">
                         <div class="transcript-header">
-                            <span>📝 Ta réponse</span>
-                            <button class="btn-small" id="clearTranscript">Effacer</button>
+                            <span>📝 Conversation en direct</span>
                         </div>
-                        <p class="transcript-text" id="transcriptText"></p>
-                        <button class="btn btn-secondary" id="submitResponse" style="display: none;">
-                            Valider ma réponse
-                        </button>
-                    </div>
-
-                    <!-- Feedback Display (Mode 1) -->
-                    <div class="feedback-box" id="feedbackBox" style="display: none;">
-                        <div class="feedback-header">
-                            <span>💬 Feedback</span>
-                        </div>
-                        <p class="feedback-text" id="feedbackText"></p>
-                        <button class="btn btn-primary" id="nextQuestionBtn">
-                            Question suivante
-                        </button>
-                    </div>
-
-                    <!-- Progress Bar -->
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="progressFill"></div>
-                        <span class="progress-text" id="progressText">0 / 0 questions</span>
                     </div>
 
                     <!-- Action Buttons -->
@@ -178,7 +155,7 @@
                         <div class="summary-stats">
                             <div class="stat">
                                 <span class="stat-value" id="summaryQuestionsCount">0</span>
-                                <span class="stat-label">Questions</span>
+                                <span class="stat-label">Échanges</span>
                             </div>
                             <div class="stat">
                                 <span class="stat-value" id="summaryMode">-</span>
@@ -206,6 +183,7 @@
         <!-- Footer -->
         <footer class="footer">
             <p>Entraîne-toi comme si c'était le jour J 🚀</p>
+            <p class="footer-version">v2.0 - OpenAI Realtime</p>
         </footer>
     </div>
 

@@ -1,22 +1,31 @@
 """
 X-HEC Interview Coach - FastAPI Backend
-Voice-to-voice interview training agent for X-HEC Entrepreneurs candidates.
+Voice-to-voice interview training with OpenAI Realtime API.
 """
 
 import os
+import json
+import asyncio
+import base64
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
 
 from services.session import SessionMode, session_manager
 from services.file_parser import parse_pdf
-from services.mistral_agent import get_coach
-from services.questions_db import get_interview_questions, get_questions_db
+from services.questions_db import get_questions_db
+from services.openai_realtime import (
+    OpenAIRealtimeClient, 
+    RealtimeSession,
+    get_realtime_client,
+    register_realtime_client,
+    remove_realtime_client
+)
 from services.scraper import (
     update_context_if_needed, 
     force_rescrape, 
@@ -31,7 +40,7 @@ load_dotenv()
 app = FastAPI(
     title="X-HEC Interview Coach",
     description="Agent IA voice-to-voice pour s'entraîner aux entretiens X-HEC Entrepreneurs",
-    version="1.0.0"
+    version="2.0.0"
 )
 
 # Mount static files
@@ -50,24 +59,18 @@ class SessionCreate(BaseModel):
     mode: str  # "question_by_question" or "full_interview"
 
 
-class MessageRequest(BaseModel):
-    session_id: str
-    message: str
-    is_presentation: bool = False
-
-
-class FeedbackRequest(BaseModel):
-    session_id: str
-    question: str
-    response: str
-
-
 # ============ Startup Events ============
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize the application on startup."""
-    print("🚀 Starting X-HEC Interview Coach...")
+    print("🚀 Starting X-HEC Interview Coach v2.0 (OpenAI Realtime)...")
+    
+    # Check OpenAI API key
+    if os.environ.get("OPENAI_API_KEY"):
+        print("✅ OpenAI API key configured")
+    else:
+        print("⚠️ OPENAI_API_KEY not set - Realtime API will not work")
     
     # Load questions database
     try:
@@ -85,7 +88,6 @@ async def startup_event():
             print("✅ Master context loaded from cache")
     except Exception as e:
         print(f"⚠️ Could not update master context: {e}")
-        print("   The app will work but with cached/empty context")
 
 
 # ============ Root & Static Routes ============
@@ -96,34 +98,24 @@ async def root():
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
-    return HTMLResponse("<h1>X-HEC Interview Coach</h1><p>Frontend not found. Please add static/index.html</p>")
+    return HTMLResponse("<h1>X-HEC Interview Coach</h1><p>Frontend not found.</p>")
 
 
 # ============ File Upload Routes ============
 
 @app.post("/api/upload")
-async def upload_dossier(
-    dossier: UploadFile = File(...)
-):
-    """
-    Upload the candidate's application dossier (PDF).
-    
-    The dossier should contain the CV and answers to the 5 application questions.
-    Interview questions are pre-loaded from the backend database.
-    """
-    # Validate file type
+async def upload_dossier(dossier: UploadFile = File(...)):
+    """Upload the candidate's application dossier (PDF)."""
     if not dossier.filename.lower().endswith('.pdf'):
         raise HTTPException(400, "Le dossier doit être un fichier PDF")
     
     try:
-        # Parse dossier PDF
         dossier_content = await dossier.read()
         dossier_text = parse_pdf(dossier_content)
         
         if not dossier_text or len(dossier_text.strip()) < 50:
-            raise HTTPException(400, "Le dossier semble vide ou invalide. Veuillez vérifier le fichier.")
+            raise HTTPException(400, "Le dossier semble vide ou invalide.")
         
-        # Get questions from database
         questions_db = get_questions_db()
         questions_list = questions_db.get_all_questions()
         
@@ -131,7 +123,6 @@ async def upload_dossier(
             "success": True,
             "dossier_preview": dossier_text[:500] + "..." if len(dossier_text) > 500 else dossier_text,
             "questions_count": len(questions_list),
-            # Store for session creation
             "_dossier_text": dossier_text,
             "_questions_list": questions_list
         }
@@ -139,218 +130,195 @@ async def upload_dossier(
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Erreur lors du traitement du dossier: {str(e)}")
+        raise HTTPException(500, f"Erreur: {str(e)}")
 
 
 # ============ Session Routes ============
 
 @app.post("/api/session/create")
-async def create_session(
-    mode: str = Form(...),
-    dossier_text: str = Form(...)
-):
-    """Create a new coaching session."""
-    try:
-        session_mode = SessionMode(mode)
-    except ValueError:
-        raise HTTPException(400, f"Mode invalide: {mode}. Utilisez 'question_by_question' ou 'full_interview'")
+async def create_session(mode: str = Form(...), dossier_text: str = Form(...)):
+    """Create a new coaching session for Realtime API."""
+    import uuid
     
-    # Get questions from database
+    if mode not in ["question_by_question", "full_interview"]:
+        raise HTTPException(400, f"Mode invalide: {mode}")
+    
     questions_db = get_questions_db()
     questions_list = questions_db.get_all_questions()
     
-    session = session_manager.create_session(
-        mode=session_mode,
-        cv_content=dossier_text,  # dossier_text contains CV + answers
-        questions_list=questions_list,
-        user_answers={}  # No separate answers needed, they're in the dossier
+    session_id = str(uuid.uuid4())
+    
+    # Create realtime session object
+    realtime_session = RealtimeSession(
+        session_id=session_id,
+        mode=mode,
+        dossier_text=dossier_text,
+        questions_list=questions_list
     )
     
+    # Store session info for later WebSocket connection
+    # The actual OpenAI connection happens in the WebSocket handler
+    
     return {
         "success": True,
-        "session_id": session.id,
-        "mode": session.mode.value,
-        "questions_count": len(session.questions_list)
+        "session_id": session_id,
+        "mode": mode,
+        "questions_count": len(questions_list)
     }
 
 
-@app.get("/api/session/{session_id}")
-async def get_session(session_id: str):
-    """Get session details."""
-    session = session_manager.get_session(session_id)
-    if not session:
-        raise HTTPException(404, "Session non trouvée")
+@app.get("/api/session/{session_id}/transcript")
+async def get_session_transcript(session_id: str):
+    """Get the transcript of a session."""
+    client = get_realtime_client(session_id)
+    if not client:
+        raise HTTPException(404, "Session non trouvée ou non connectée")
+    
+    transcript = client.get_transcript()
+    
+    # Format transcript
+    formatted = []
+    for item in transcript:
+        role = "Coach" if item["role"] == "assistant" else "Vous"
+        formatted.append(f"{role}: {item['content']}")
     
     return {
-        "id": session.id,
-        "mode": session.mode.value,
-        "is_active": session.is_active,
-        "presentation_done": session.presentation_done,
-        "questions_answered": len(session.exchanges),
-        "total_questions": len(session.questions_list)
+        "success": True,
+        "transcript": "\n\n".join(formatted),
+        "raw": transcript
     }
 
 
-@app.delete("/api/session/{session_id}")
-async def end_session(session_id: str):
-    """End a coaching session."""
-    session = session_manager.get_session(session_id)
-    if not session:
-        raise HTTPException(404, "Session non trouvée")
+# ============ WebSocket Endpoint for Realtime Audio ============
+
+# Store session data temporarily (in production, use Redis or similar)
+_pending_sessions: dict[str, RealtimeSession] = {}
+
+
+@app.post("/api/session/prepare")
+async def prepare_session(mode: str = Form(...), dossier_text: str = Form(...)):
+    """Prepare a session for WebSocket connection."""
+    import uuid
     
-    session_manager.end_session(session_id)
-    return {"success": True, "message": "Session terminée"}
+    if mode not in ["question_by_question", "full_interview"]:
+        raise HTTPException(400, f"Mode invalide: {mode}")
+    
+    questions_db = get_questions_db()
+    questions_list = questions_db.get_all_questions()
+    
+    session_id = str(uuid.uuid4())
+    
+    realtime_session = RealtimeSession(
+        session_id=session_id,
+        mode=mode,
+        dossier_text=dossier_text,
+        questions_list=questions_list
+    )
+    
+    _pending_sessions[session_id] = realtime_session
+    
+    return {
+        "success": True,
+        "session_id": session_id,
+        "mode": mode,
+        "questions_count": len(questions_list)
+    }
 
 
-# ============ Interview Routes ============
-
-@app.post("/api/interview/start")
-async def start_interview(request: MessageRequest):
+@app.websocket("/ws/interview/{session_id}")
+async def websocket_interview(websocket: WebSocket, session_id: str):
     """
-    Start the interview with the candidate's presentation.
+    WebSocket endpoint for real-time voice interview.
     
-    The coach will comment briefly and ask the first question.
+    Protocol:
+    - Client sends: {"type": "audio", "data": "<base64 PCM audio>"}
+    - Client sends: {"type": "text", "data": "<text message>"}
+    - Client sends: {"type": "interrupt"}
+    - Server sends: {"type": "audio", "data": "<base64 PCM audio>"}
+    - Server sends: {"type": "transcript", "role": "user|assistant", "text": "..."}
+    - Server sends: {"type": "status", "status": "connected|speaking|listening"}
+    - Server sends: {"type": "error", "message": "..."}
     """
-    session = session_manager.get_session(request.session_id)
+    await websocket.accept()
+    
+    # Get the prepared session
+    session = _pending_sessions.pop(session_id, None)
     if not session:
-        raise HTTPException(404, "Session non trouvée")
+        await websocket.send_json({"type": "error", "message": "Session non trouvée. Créez d'abord une session."})
+        await websocket.close()
+        return
     
-    if session.presentation_done:
-        raise HTTPException(400, "L'entretien a déjà commencé")
-    
+    # Create OpenAI Realtime client
     try:
-        coach = get_coach()
-        response = coach.start_interview(session, request.message)
+        client = OpenAIRealtimeClient(session)
+        register_realtime_client(session_id, client)
         
-        return {
-            "success": True,
-            "coach_response": response,
-            "session_status": {
-                "presentation_done": True,
-                "mode": session.mode.value
-            }
-        }
-    except Exception as e:
-        raise HTTPException(500, f"Erreur lors du démarrage de l'entretien: {str(e)}")
-
-
-@app.post("/api/interview/respond")
-async def respond_to_question(request: FeedbackRequest):
-    """
-    Process candidate's response to a question.
-    
-    In Mode 1: Returns immediate feedback
-    In Mode 2: Just stores the response, no feedback
-    """
-    session = session_manager.get_session(request.session_id)
-    if not session:
-        raise HTTPException(404, "Session non trouvée")
-    
-    if not session.presentation_done:
-        raise HTTPException(400, "L'entretien n'a pas encore commencé")
-    
-    try:
-        coach = get_coach()
+        # Set up callbacks
+        async def on_audio(audio_bytes: bytes):
+            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+            await websocket.send_json({"type": "audio", "data": audio_b64})
         
-        if session.mode == SessionMode.QUESTION_BY_QUESTION:
-            # Mode 1: Immediate feedback
-            feedback = coach.process_response_mode1(session, request.question, request.response)
-            return {
-                "success": True,
-                "feedback": feedback,
-                "questions_answered": len(session.exchanges)
-            }
-        else:
-            # Mode 2: No immediate feedback
-            coach.process_response_mode2(session, request.question, request.response)
-            return {
-                "success": True,
-                "feedback": None,
-                "questions_answered": len(session.exchanges)
-            }
+        async def on_transcript(role: str, text: str):
+            await websocket.send_json({"type": "transcript", "role": role, "text": text})
+        
+        async def on_error(error_msg: str):
+            await websocket.send_json({"type": "error", "message": error_msg})
+        
+        client.on_audio = on_audio
+        client.on_transcript = on_transcript
+        client.on_error = on_error
+        
+        # Connect to OpenAI
+        await client.connect()
+        await websocket.send_json({"type": "status", "status": "connected"})
+        
+        # Start listening task for OpenAI responses
+        listen_task = asyncio.create_task(client.listen())
+        
+        # Handle messages from client
+        try:
+            while True:
+                data = await websocket.receive_json()
+                msg_type = data.get("type", "")
+                
+                if msg_type == "audio":
+                    # Received audio from client
+                    audio_b64 = data.get("data", "")
+                    if audio_b64:
+                        audio_bytes = base64.b64decode(audio_b64)
+                        await client.send_audio(audio_bytes)
+                
+                elif msg_type == "commit":
+                    # Client signals end of speech
+                    await client.commit_audio()
+                
+                elif msg_type == "text":
+                    # Text input (for testing)
+                    text = data.get("data", "")
+                    if text:
+                        await client.send_text(text)
+                
+                elif msg_type == "interrupt":
+                    # User wants to interrupt AI
+                    await client.cancel_response()
+                
+                elif msg_type == "end":
+                    # End session
+                    break
+                    
+        except WebSocketDisconnect:
+            print(f"Client disconnected: {session_id}")
+        
+        finally:
+            # Cleanup
+            listen_task.cancel()
+            await client.disconnect()
+            remove_realtime_client(session_id)
             
     except Exception as e:
-        raise HTTPException(500, f"Erreur lors du traitement de la réponse: {str(e)}")
-
-
-@app.post("/api/interview/next-question")
-async def get_next_question(session_id: str = Form(...)):
-    """Get the next question from the coach."""
-    session = session_manager.get_session(session_id)
-    if not session:
-        raise HTTPException(404, "Session non trouvée")
-    
-    # Check if we've done enough questions for Mode 2 (20 min ~ 8-10 questions)
-    if session.mode == SessionMode.FULL_INTERVIEW and len(session.exchanges) >= 10:
-        return {
-            "success": True,
-            "question": None,
-            "interview_complete": True,
-            "message": "L'entretien de 20 minutes est terminé. Passons au debrief."
-        }
-    
-    try:
-        coach = get_coach()
-        next_q = coach.get_next_question(session)
-        
-        if next_q is None:
-            return {
-                "success": True,
-                "question": None,
-                "interview_complete": True,
-                "message": "Toutes les questions ont été posées."
-            }
-        
-        return {
-            "success": True,
-            "question": next_q,
-            "interview_complete": False,
-            "questions_remaining": len(session.questions_list) - len(session.exchanges)
-        }
-        
-    except Exception as e:
-        raise HTTPException(500, f"Erreur lors de la génération de la question: {str(e)}")
-
-
-@app.post("/api/interview/summary")
-async def get_summary(session_id: str = Form(...)):
-    """Generate the final summary/debrief."""
-    session = session_manager.get_session(session_id)
-    if not session:
-        raise HTTPException(404, "Session non trouvée")
-    
-    if len(session.exchanges) == 0:
-        raise HTTPException(400, "Aucune question n'a été répondue")
-    
-    try:
-        coach = get_coach()
-        summary = coach.generate_session_summary(session)
-        
-        return {
-            "success": True,
-            "summary": summary,
-            "questions_answered": len(session.exchanges),
-            "mode": session.mode.value
-        }
-        
-    except Exception as e:
-        raise HTTPException(500, f"Erreur lors de la génération du résumé: {str(e)}")
-
-
-@app.get("/api/interview/transcript/{session_id}")
-async def get_transcript(session_id: str):
-    """Get the full transcript of the session."""
-    session = session_manager.get_session(session_id)
-    if not session:
-        raise HTTPException(404, "Session non trouvée")
-    
-    transcript = session.get_transcript_text()
-    
-    return {
-        "success": True,
-        "transcript": transcript,
-        "session_id": session_id
-    }
+        await websocket.send_json({"type": "error", "message": str(e)})
+        remove_realtime_client(session_id)
+        await websocket.close()
 
 
 # ============ Questions Routes ============
@@ -370,7 +338,7 @@ async def get_questions_list():
 
 @app.post("/admin/rescrape")
 async def admin_rescrape():
-    """Force a rescrape of pineurs.com (admin only)."""
+    """Force a rescrape of pineurs.com."""
     try:
         content = force_rescrape()
         return {
@@ -384,24 +352,12 @@ async def admin_rescrape():
 
 @app.get("/admin/context")
 async def admin_get_context():
-    """Get the current master context (admin only)."""
+    """Get the current master context."""
     context = load_context()
     return {
         "success": True,
         "context": context,
         "text_preview": get_master_context_text()[:1000]
-    }
-
-
-@app.post("/admin/reload-questions")
-async def admin_reload_questions():
-    """Reload questions from the Excel file."""
-    global _questions_db
-    from services.questions_db import QuestionsDatabase, _questions_db
-    _questions_db = QuestionsDatabase()
-    return {
-        "success": True,
-        "questions_count": _questions_db.get_questions_count()
     }
 
 
@@ -413,8 +369,8 @@ async def health_check():
     db = get_questions_db()
     return {
         "status": "healthy",
-        "service": "X-HEC Interview Coach",
-        "mistral_configured": bool(os.environ.get("MISTRAL_API_KEY")),
+        "service": "X-HEC Interview Coach v2.0",
+        "openai_configured": bool(os.environ.get("OPENAI_API_KEY")),
         "questions_loaded": db.get_questions_count()
     }
 
