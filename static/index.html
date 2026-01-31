@@ -3,188 +3,121 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>X-HEC Interview Coach</title>
+    <title>X-HEC Coach</title>
     <link rel="stylesheet" href="/static/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="app-container">
-        <!-- Header -->
-        <header class="header">
-            <div class="logo">
-                <span class="logo-icon">🎯</span>
-                <h1>X-HEC Coach</h1>
-            </div>
-            <div class="header-status" id="connectionStatus">
-                <span class="status-dot"></span>
-                <span class="status-text">Prêt</span>
-            </div>
-        </header>
-
-        <!-- Main Content -->
-        <main class="main-content">
-            <!-- Step 1: Upload -->
-            <section class="step step-upload active" id="stepUpload">
-                <div class="step-header">
-                    <span class="step-number">1</span>
-                    <h2>Upload ton dossier de candidature</h2>
+    <div class="app">
+        <!-- Step 1: Upload -->
+        <section class="step step-upload" id="stepUpload">
+            <div class="upload-container">
+                <div class="upload-header">
+                    <h1>X-HEC Coach</h1>
+                    <p>Entraîne-toi pour ton entretien</p>
                 </div>
-                <div class="step-content">
-                    <p class="step-description">
-                        Charge ton dossier de candidature (PDF) contenant ton CV et tes réponses aux questions de candidature.
-                    </p>
-                    
-                    <form id="uploadForm" class="upload-form">
-                        <div class="upload-zone upload-zone-large" id="dossierZone">
-                            <input type="file" id="dossierInput" accept=".pdf" required>
-                            <label for="dossierInput" class="upload-label">
-                                <span class="upload-icon">📁</span>
-                                <span class="upload-text">Dossier de candidature (PDF)</span>
-                                <span class="upload-hint">CV + Réponses aux questions de candidature</span>
-                                <span class="upload-status" id="dossierStatus">Aucun fichier sélectionné</span>
-                            </label>
-                        </div>
-                        
-                        <button type="submit" class="btn btn-primary" id="uploadBtn" disabled>
-                            Charger mon dossier
-                        </button>
-                    </form>
+                
+                <form id="uploadForm" class="upload-form">
+                    <div class="upload-zone" id="dossierZone">
+                        <input type="file" id="dossierInput" accept=".pdf" required>
+                        <label for="dossierInput" class="upload-label">
+                            <div class="upload-icon">
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="17 8 12 3 7 8"/>
+                                    <line x1="12" y1="3" x2="12" y2="15"/>
+                                </svg>
+                            </div>
+                            <span class="upload-text" id="dossierStatus">Glisse ton fichier ici</span>
+                            <span class="upload-hint">ou clique pour sélectionner (PDF)</span>
+                        </label>
+                    </div>
                     
                     <div class="upload-preview" id="uploadPreview" style="display: none;">
-                        <div class="preview-card">
-                            <h4>✅ Dossier chargé</h4>
-                            <p><strong>Questions disponibles:</strong> <span id="questionsCount">0</span> questions d'entretien prêtes</p>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Step 2: Mode Selection -->
-            <section class="step step-mode" id="stepMode" style="display: none;">
-                <div class="step-header">
-                    <span class="step-number">2</span>
-                    <h2>Choisis ton mode</h2>
-                </div>
-                <div class="step-content">
-                    <div class="mode-cards">
-                        <div class="mode-card" data-mode="question_by_question">
-                            <div class="mode-icon">🎯</div>
-                            <h3>Question par Question</h3>
-                            <p>Entraîne-toi question par question avec un feedback immédiat après chaque réponse.</p>
-                            <ul class="mode-features">
-                                <li>✓ Feedback immédiat</li>
-                                <li>✓ Arrête quand tu veux</li>
-                                <li>✓ Idéal pour débuter</li>
-                            </ul>
-                        </div>
-                        
-                        <div class="mode-card" data-mode="full_interview">
-                            <div class="mode-icon">⏱️</div>
-                            <h3>Simulation 20 min</h3>
-                            <p>Entretien complet de 20 minutes avec debrief global à la fin.</p>
-                            <ul class="mode-features">
-                                <li>✓ Conditions réelles</li>
-                                <li>✓ 8-10 questions enchaînées</li>
-                                <li>✓ Debrief complet à la fin</li>
-                            </ul>
+                        <div class="preview-badge">
+                            <span class="check">✓</span>
+                            <span><span id="questionsCount">0</span> questions prêtes</span>
                         </div>
                     </div>
                     
-                    <div class="mode-note">
-                        <p>💡 <strong>Nouveau :</strong> Conversation en temps réel avec le coach IA. Parle naturellement, il peut t'interrompre !</p>
+                    <button type="submit" class="btn-primary" id="uploadBtn" disabled>
+                        Continuer
+                    </button>
+                </form>
+            </div>
+        </section>
+
+        <!-- Step 2: Mode Selection -->
+        <section class="step step-mode" id="stepMode" style="display: none;">
+            <div class="mode-container">
+                <div class="mode-header">
+                    <h2>Choisis ton mode</h2>
+                </div>
+                
+                <div class="mode-cards">
+                    <div class="mode-card" data-mode="question_by_question">
+                        <div class="mode-icon">🎯</div>
+                        <h3>Question par Question</h3>
+                        <p>Feedback immédiat après chaque réponse</p>
+                    </div>
+                    
+                    <div class="mode-card" data-mode="full_interview">
+                        <div class="mode-icon">⏱</div>
+                        <h3>Simulation 20 min</h3>
+                        <p>Entretien complet avec debrief à la fin</p>
                     </div>
                 </div>
-            </section>
+            </div>
+        </section>
 
-            <!-- Step 3: Interview -->
-            <section class="step step-interview" id="stepInterview" style="display: none;">
-                <div class="interview-container">
-                    <!-- Coach Display -->
-                    <div class="coach-section">
-                        <div class="coach-avatar">
-                            <div class="avatar-circle" id="coachAvatar">
-                                <span>🎓</span>
-                            </div>
-                            <div class="speaking-indicator" id="coachSpeaking" style="display: none;">
-                                <span></span><span></span><span></span>
-                            </div>
-                        </div>
-                        <div class="coach-message" id="coachMessage">
-                            <p>Connexion au coach IA...</p>
-                        </div>
-                    </div>
-
-                    <!-- Voice Controls -->
-                    <div class="voice-controls">
-                        <button class="btn-voice" id="voiceBtn">
-                            <span class="voice-icon">🎤</span>
-                            <span class="voice-text">Maintiens pour parler</span>
-                        </button>
-                        <div class="voice-status" id="voiceStatus">
-                            <span class="status-text">Prêt</span>
-                        </div>
-                        <p class="voice-hint">Maintiens le bouton enfoncé pour parler, relâche quand tu as fini.</p>
-                    </div>
-
-                    <!-- Live Transcript -->
-                    <div class="transcript-box" id="transcriptBox">
-                        <div class="transcript-header">
-                            <span>📝 Conversation en direct</span>
-                        </div>
-                    </div>
-
-                    <!-- Action Buttons -->
-                    <div class="action-buttons">
-                        <button class="btn btn-secondary" id="endSessionBtn">
-                            Terminer la session
-                        </button>
+        <!-- Step 3: Interview -->
+        <section class="step step-interview" id="stepInterview" style="display: none;">
+            <div class="interview-container">
+                <!-- Voice Blob Visualization -->
+                <div class="voice-blob-container">
+                    <div class="voice-blob idle" id="voiceBlob">
+                        <div class="blob-inner"></div>
                     </div>
                 </div>
-            </section>
+                
+                <!-- Status Text -->
+                <p class="status-text" id="statusText">Connexion...</p>
+                
+                <!-- Mic Button -->
+                <button class="mic-btn" id="voiceBtn">
+                    <span class="mic-icon">🎤</span>
+                </button>
+                
+                <!-- End Button -->
+                <button class="end-btn" id="endSessionBtn">
+                    Terminer
+                </button>
+            </div>
+        </section>
 
-            <!-- Step 4: Summary -->
-            <section class="step step-summary" id="stepSummary" style="display: none;">
-                <div class="step-header">
-                    <span class="step-number">✓</span>
-                    <h2>Résumé de ta session</h2>
+        <!-- Step 4: Summary -->
+        <section class="step step-summary" id="stepSummary" style="display: none;">
+            <div class="summary-container">
+                <div class="summary-header">
+                    <h2>Session terminée</h2>
                 </div>
-                <div class="step-content">
-                    <div class="summary-card">
-                        <div class="summary-stats">
-                            <div class="stat">
-                                <span class="stat-value" id="summaryQuestionsCount">0</span>
-                                <span class="stat-label">Échanges</span>
-                            </div>
-                            <div class="stat">
-                                <span class="stat-value" id="summaryMode">-</span>
-                                <span class="stat-label">Mode</span>
-                            </div>
-                        </div>
-                        
-                        <div class="summary-content" id="summaryContent">
-                            <p>Chargement du résumé...</p>
-                        </div>
-                        
-                        <div class="summary-actions">
-                            <button class="btn btn-secondary" id="downloadTranscript">
-                                📥 Télécharger le transcript
-                            </button>
-                            <button class="btn btn-primary" id="newSession">
-                                🔄 Nouvelle session
-                            </button>
-                        </div>
-                    </div>
+                
+                <div class="summary-content" id="summaryContent">
+                    <p>Chargement...</p>
                 </div>
-            </section>
-        </main>
-
-        <!-- Footer -->
-        <footer class="footer">
-            <p>Entraîne-toi comme si c'était le jour J 🚀</p>
-            <p class="footer-version">v2.0 - OpenAI Realtime</p>
-        </footer>
+                
+                <div class="summary-actions">
+                    <button class="btn-secondary" id="downloadTranscript">
+                        Télécharger le transcript
+                    </button>
+                    <button class="btn-primary" id="newSession">
+                        Nouvelle session
+                    </button>
+                </div>
+            </div>
+        </section>
     </div>
 
     <!-- Loading Overlay -->
@@ -193,9 +126,8 @@
         <p class="loading-text" id="loadingText">Chargement...</p>
     </div>
 
-    <!-- Error Toast -->
+    <!-- Toast -->
     <div class="toast" id="toast" style="display: none;">
-        <span class="toast-icon">⚠️</span>
         <span class="toast-message" id="toastMessage"></span>
     </div>
 
