@@ -18,7 +18,7 @@ from services.scraper import get_master_context_text
 
 
 # OpenAI Realtime API endpoint
-OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
+OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview"
 
 
 @dataclass
