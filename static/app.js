@@ -1,77 +1,84 @@
 /**
  * X-HEC Interview Coach - Frontend Application
- * Real-time voice-to-voice with OpenAI Realtime API
- * v2.1 - Clean UI with toggle mic
+ * Sequential voice flow with Whisper + GPT-4 + TTS
+ * v3.0
  */
 
 // ============ State Management ============
 const state = {
-    // Files
-    dossierFile: null,
-    dossierText: '',
-    questionsList: [],
-    
     // Session
     sessionId: null,
     mode: null,
-    questionsCount: 0,
+    dossierText: '',
     
-    // WebSocket & Audio
-    websocket: null,
-    audioContext: null,
-    mediaStream: null,
-    audioWorklet: null,
-    isConnected: false,
+    // Themes & Questions
+    themes: {},
+    currentTheme: null,
+    currentQuestions: [],
+    currentQuestion: null,
+    
+    // Audio
+    mediaRecorder: null,
+    audioChunks: [],
     isRecording: false,
-    isSpeaking: false,
-    
-    // Audio playback
-    audioQueue: [],
     isPlaying: false,
+    isProcessing: false,
     
-    // Transcript (only stored, not displayed live)
+    // Transcript (for download)
     transcript: []
 };
 
-// ============ Audio Configuration ============
-const SAMPLE_RATE = 24000;
-
 // ============ DOM Elements ============
+const $ = (id) => document.getElementById(id);
+
 const elements = {
     // Steps
-    stepUpload: document.getElementById('stepUpload'),
-    stepMode: document.getElementById('stepMode'),
-    stepInterview: document.getElementById('stepInterview'),
-    stepSummary: document.getElementById('stepSummary'),
+    stepUpload: $('stepUpload'),
+    stepMode: $('stepMode'),
+    stepThemes: $('stepThemes'),
+    stepQuestions: $('stepQuestions'),
+    stepInterview: $('stepInterview'),
+    stepDebrief: $('stepDebrief'),
     
     // Upload
-    dossierInput: document.getElementById('dossierInput'),
-    dossierStatus: document.getElementById('dossierStatus'),
-    dossierZone: document.getElementById('dossierZone'),
-    uploadBtn: document.getElementById('uploadBtn'),
-    uploadForm: document.getElementById('uploadForm'),
-    uploadPreview: document.getElementById('uploadPreview'),
-    questionsCount: document.getElementById('questionsCount'),
+    uploadForm: $('uploadForm'),
+    dossierInput: $('dossierInput'),
+    dossierZone: $('dossierZone'),
+    dossierStatus: $('dossierStatus'),
+    uploadBtn: $('uploadBtn'),
     
     // Mode
     modeCards: document.querySelectorAll('.mode-card'),
     
-    // Interview
-    voiceBlob: document.getElementById('voiceBlob'),
-    statusText: document.getElementById('statusText'),
-    voiceBtn: document.getElementById('voiceBtn'),
-    endSessionBtn: document.getElementById('endSessionBtn'),
+    // Themes
+    themesGrid: $('themesGrid'),
+    backToMode: $('backToMode'),
     
-    // Summary
-    summaryContent: document.getElementById('summaryContent'),
-    downloadTranscript: document.getElementById('downloadTranscript'),
-    newSession: document.getElementById('newSession'),
+    // Questions
+    selectedThemeTitle: $('selectedThemeTitle'),
+    questionsList: $('questionsList'),
+    randomQuestionBtn: $('randomQuestionBtn'),
+    backToThemes: $('backToThemes'),
+    
+    // Interview
+    coachMessage: $('coachMessage'),
+    coachText: $('coachText'),
+    voiceCircle: $('voiceCircle'),
+    voiceStatus: $('voiceStatus'),
+    skipQuestionBtn: $('skipQuestionBtn'),
+    endSessionBtn: $('endSessionBtn'),
+    
+    // Debrief
+    debriefContent: $('debriefContent'),
+    downloadTranscript: $('downloadTranscript'),
+    newSession: $('newSession'),
     
     // UI
-    loadingOverlay: document.getElementById('loadingOverlay'),
-    loadingText: document.getElementById('loadingText'),
-    toast: document.getElementById('toast'),
-    toastMessage: document.getElementById('toastMessage')
+    loadingOverlay: $('loadingOverlay'),
+    loadingText: $('loadingText'),
+    toast: $('toast'),
+    toastMessage: $('toastMessage'),
+    audioPlayer: $('audioPlayer')
 };
 
 // ============ Utility Functions ============
@@ -93,424 +100,534 @@ function showToast(message, duration = 4000) {
     }, duration);
 }
 
-function showStep(stepElement) {
-    [elements.stepUpload, elements.stepMode, elements.stepInterview, elements.stepSummary].forEach(step => {
-        if (step) step.style.display = 'none';
+function showStep(stepId) {
+    const steps = ['stepUpload', 'stepMode', 'stepThemes', 'stepQuestions', 'stepInterview', 'stepDebrief'];
+    steps.forEach(id => {
+        const el = $(id);
+        if (el) el.style.display = id === stepId ? 'flex' : 'none';
     });
-    if (stepElement) stepElement.style.display = 'flex';
 }
 
-function updateStatus(text) {
-    if (elements.statusText) {
-        elements.statusText.textContent = text;
+function setVoiceState(newState) {
+    // States: idle, recording, speaking, processing
+    elements.voiceCircle.classList.remove('recording', 'speaking', 'processing');
+    if (newState !== 'idle') {
+        elements.voiceCircle.classList.add(newState);
     }
-}
-
-function setBlobState(state) {
-    // States: 'idle', 'listening', 'speaking'
-    if (!elements.voiceBlob) return;
     
-    elements.voiceBlob.classList.remove('idle', 'listening', 'speaking');
-    elements.voiceBlob.classList.add(state);
+    const statusTexts = {
+        idle: 'Clique pour répondre',
+        recording: 'Clique quand tu as fini',
+        speaking: 'Le coach parle...',
+        processing: 'Traitement en cours...'
+    };
+    elements.voiceStatus.textContent = statusTexts[newState] || '';
 }
 
-// ============ Audio Handling ============
+// ============ Audio Functions ============
 
-async function initAudio() {
+async function initMediaRecorder() {
     try {
-        state.mediaStream = await navigator.mediaDevices.getUserMedia({
+        const stream = await navigator.mediaDevices.getUserMedia({ 
             audio: {
-                sampleRate: SAMPLE_RATE,
-                channelCount: 1,
                 echoCancellation: true,
                 noiseSuppression: true
             }
         });
         
-        state.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-        await state.audioContext.audioWorklet.addModule('/static/audio-processor.js');
+        state.mediaRecorder = new MediaRecorder(stream, {
+            mimeType: 'audio/webm;codecs=opus'
+        });
         
-        console.log('✅ Audio initialized');
+        state.mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                state.audioChunks.push(event.data);
+            }
+        };
+        
+        state.mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(state.audioChunks, { type: 'audio/webm' });
+            state.audioChunks = [];
+            await processUserAudio(audioBlob);
+        };
+        
         return true;
-        
     } catch (error) {
-        console.error('❌ Audio init failed:', error);
-        showToast('Erreur: Impossible d\'accéder au microphone.');
+        console.error('Microphone access denied:', error);
+        showToast('Erreur: Accès au microphone refusé');
         return false;
     }
 }
 
 function startRecording() {
-    if (!state.mediaStream || !state.audioContext || !state.websocket) return;
+    if (!state.mediaRecorder || state.isRecording || state.isProcessing || state.isPlaying) return;
     
-    const source = state.audioContext.createMediaStreamSource(state.mediaStream);
-    state.audioWorklet = new AudioWorkletNode(state.audioContext, 'audio-processor');
-    
-    state.audioWorklet.port.onmessage = (event) => {
-        if (state.isRecording && state.websocket?.readyState === WebSocket.OPEN) {
-            const float32Data = event.data;
-            const int16Data = new Int16Array(float32Data.length);
-            
-            for (let i = 0; i < float32Data.length; i++) {
-                const s = Math.max(-1, Math.min(1, float32Data[i]));
-                int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-            }
-            
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(int16Data.buffer)));
-            state.websocket.send(JSON.stringify({ type: 'audio', data: base64 }));
-        }
-    };
-    
-    source.connect(state.audioWorklet);
-    state.audioWorklet.connect(state.audioContext.destination);
-    
+    state.audioChunks = [];
+    state.mediaRecorder.start();
     state.isRecording = true;
-    updateRecordingUI(true);
+    setVoiceState('recording');
 }
 
 function stopRecording() {
-    if (state.audioWorklet) {
-        state.audioWorklet.disconnect();
-        state.audioWorklet = null;
-    }
-    state.isRecording = false;
-    updateRecordingUI(false);
+    if (!state.mediaRecorder || !state.isRecording) return;
     
-    if (state.websocket?.readyState === WebSocket.OPEN) {
-        state.websocket.send(JSON.stringify({ type: 'commit' }));
-    }
+    state.mediaRecorder.stop();
+    state.isRecording = false;
+    setVoiceState('processing');
+    state.isProcessing = true;
 }
 
-function updateRecordingUI(recording) {
-    if (recording) {
-        elements.voiceBtn.classList.add('recording');
-        elements.voiceBtn.querySelector('.mic-icon').textContent = '⏹';
-        updateStatus('Je t\'écoute...');
-        setBlobState('listening');
-    } else {
-        elements.voiceBtn.classList.remove('recording');
-        elements.voiceBtn.querySelector('.mic-icon').textContent = '🎤';
-        updateStatus('Appuie pour parler');
-        setBlobState('idle');
-    }
-}
-
-// Toggle recording (click to start, click to stop)
 function toggleRecording() {
+    if (state.isPlaying) {
+        // Stop playback if needed
+        elements.audioPlayer.pause();
+        state.isPlaying = false;
+    }
+    
     if (state.isRecording) {
         stopRecording();
-    } else {
-        // If AI is speaking, interrupt it
-        if (state.isSpeaking) {
-            interruptPlayback();
-        }
+    } else if (!state.isProcessing) {
         startRecording();
     }
 }
 
-// ============ Audio Playback ============
-
-async function playAudioChunk(base64Audio) {
-    if (!state.audioContext) return;
-    
-    const binaryString = atob(base64Audio);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-    }
-    
-    const int16 = new Int16Array(bytes.buffer);
-    const float32 = new Float32Array(int16.length);
-    for (let i = 0; i < int16.length; i++) {
-        float32[i] = int16[i] / 0x8000;
-    }
-    
-    const audioBuffer = state.audioContext.createBuffer(1, float32.length, SAMPLE_RATE);
-    audioBuffer.copyToChannel(float32, 0);
-    
-    state.audioQueue.push(audioBuffer);
-    
-    if (!state.isPlaying) {
-        playNextInQueue();
-    }
-}
-
-function playNextInQueue() {
-    if (state.audioQueue.length === 0) {
-        state.isPlaying = false;
-        state.isSpeaking = false;
-        setBlobState('idle');
-        updateStatus('Appuie pour parler');
-        return;
-    }
-    
-    state.isPlaying = true;
-    state.isSpeaking = true;
-    setBlobState('speaking');
-    updateStatus('Le coach parle...');
-    
-    const buffer = state.audioQueue.shift();
-    const source = state.audioContext.createBufferSource();
-    source.buffer = buffer;
-    source.connect(state.audioContext.destination);
-    source.onended = playNextInQueue;
-    source.start();
-}
-
-function interruptPlayback() {
-    state.audioQueue = [];
-    state.isPlaying = false;
-    state.isSpeaking = false;
-    setBlobState('idle');
-    
-    if (state.websocket?.readyState === WebSocket.OPEN) {
-        state.websocket.send(JSON.stringify({ type: 'interrupt' }));
-    }
-}
-
-// ============ WebSocket Connection ============
-
-function connectWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/interview/${state.sessionId}`;
-    
-    updateStatus('Connexion...');
-    
-    state.websocket = new WebSocket(wsUrl);
-    
-    state.websocket.onopen = () => {
-        console.log('✅ WebSocket connected');
-        state.isConnected = true;
-        updateStatus('Connecté - Appuie pour parler');
-        setBlobState('idle');
-        showStep(elements.stepInterview);
-        hideLoading();
-    };
-    
-    state.websocket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+async function processUserAudio(audioBlob) {
+    try {
+        // 1. Transcribe with Whisper
+        const formData = new FormData();
+        formData.append('audio', audioBlob, 'recording.webm');
         
-        switch (data.type) {
-            case 'audio':
-                playAudioChunk(data.data);
-                break;
-                
-            case 'transcript':
-                // Store transcript but don't display live
-                if (data.text && data.text.trim()) {
-                    state.transcript.push({
-                        role: data.role,
-                        text: data.text,
-                        timestamp: new Date()
-                    });
-                }
-                break;
-                
-            case 'status':
-                console.log('Status:', data.status);
-                break;
-                
-            case 'error':
-                console.error('Server error:', data.message);
-                showToast(`Erreur: ${data.message}`);
-                break;
-        }
-    };
-    
-    state.websocket.onclose = () => {
-        console.log('WebSocket closed');
-        state.isConnected = false;
-        updateStatus('Déconnecté');
-    };
-    
-    state.websocket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        showToast('Erreur de connexion');
-    };
+        const transcribeRes = await fetch('/api/transcribe', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (!transcribeRes.ok) throw new Error('Transcription failed');
+        
+        const { text: userText } = await transcribeRes.json();
+        
+        // Add to transcript
+        state.transcript.push({ role: 'user', content: userText });
+        
+        // 2. Send to backend for response
+        const responseFormData = new FormData();
+        responseFormData.append('user_text', userText);
+        
+        const responseRes = await fetch(`/api/session/${state.sessionId}/respond`, {
+            method: 'POST',
+            body: responseFormData
+        });
+        
+        if (!responseRes.ok) throw new Error('Response failed');
+        
+        const responseData = await responseRes.json();
+        
+        // Add to transcript
+        state.transcript.push({ role: 'assistant', content: responseData.text });
+        
+        // 3. Display and play response
+        elements.coachText.textContent = responseData.text;
+        await playAudioBase64(responseData.audio_base64);
+        
+    } catch (error) {
+        console.error('Process error:', error);
+        showToast('Erreur de traitement');
+    } finally {
+        state.isProcessing = false;
+        setVoiceState('idle');
+    }
 }
 
-function disconnectWebSocket() {
-    if (state.websocket) {
-        state.websocket.send(JSON.stringify({ type: 'end' }));
-        state.websocket.close();
-        state.websocket = null;
-    }
-    state.isConnected = false;
+async function playAudioBase64(base64Audio) {
+    return new Promise((resolve) => {
+        const audioData = atob(base64Audio);
+        const arrayBuffer = new ArrayBuffer(audioData.length);
+        const uint8Array = new Uint8Array(arrayBuffer);
+        for (let i = 0; i < audioData.length; i++) {
+            uint8Array[i] = audioData.charCodeAt(i);
+        }
+        
+        const blob = new Blob([uint8Array], { type: 'audio/mpeg' });
+        const url = URL.createObjectURL(blob);
+        
+        elements.audioPlayer.src = url;
+        state.isPlaying = true;
+        setVoiceState('speaking');
+        
+        elements.audioPlayer.onended = () => {
+            state.isPlaying = false;
+            setVoiceState('idle');
+            URL.revokeObjectURL(url);
+            resolve();
+        };
+        
+        elements.audioPlayer.onerror = () => {
+            state.isPlaying = false;
+            setVoiceState('idle');
+            URL.revokeObjectURL(url);
+            resolve();
+        };
+        
+        elements.audioPlayer.play();
+    });
 }
 
 // ============ API Functions ============
 
-async function uploadDossier() {
+async function uploadDossier(file) {
     const formData = new FormData();
-    formData.append('dossier', state.dossierFile);
+    formData.append('dossier', file);
     
-    const response = await fetch('/api/upload', {
+    const res = await fetch('/api/upload', {
         method: 'POST',
         body: formData
     });
     
-    if (!response.ok) {
-        const error = await response.json();
+    if (!res.ok) {
+        const error = await res.json();
         throw new Error(error.detail || 'Upload failed');
     }
     
-    return response.json();
+    return res.json();
 }
 
-async function prepareSession(mode) {
+async function createSession(mode, dossierText) {
     const formData = new FormData();
     formData.append('mode', mode);
-    formData.append('dossier_text', state.dossierText);
+    formData.append('dossier_text', dossierText);
     
-    const response = await fetch('/api/session/prepare', {
+    const res = await fetch('/api/session/create', {
         method: 'POST',
         body: formData
     });
     
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Session preparation failed');
+    if (!res.ok) throw new Error('Session creation failed');
+    
+    return res.json();
+}
+
+async function getSessionIntro() {
+    const res = await fetch(`/api/session/${state.sessionId}/intro`);
+    if (!res.ok) throw new Error('Failed to get intro');
+    return res.json();
+}
+
+async function getThemes() {
+    const res = await fetch('/api/themes');
+    if (!res.ok) throw new Error('Failed to get themes');
+    return res.json();
+}
+
+async function selectTheme(theme) {
+    const formData = new FormData();
+    formData.append('theme', theme);
+    
+    const res = await fetch(`/api/session/${state.sessionId}/select-theme`, {
+        method: 'POST',
+        body: formData
+    });
+    
+    if (!res.ok) throw new Error('Failed to select theme');
+    return res.json();
     }
     
-    return response.json();
+async function selectQuestion(question = null, random = false) {
+    const formData = new FormData();
+    if (question) formData.append('question', question);
+    formData.append('random', random.toString());
+    
+    const res = await fetch(`/api/session/${state.sessionId}/select-question`, {
+        method: 'POST',
+        body: formData
+    });
+    
+    if (!res.ok) throw new Error('Failed to select question');
+    return res.json();
+}
+
+async function getDebrief() {
+    const res = await fetch(`/api/session/${state.sessionId}/debrief`, {
+        method: 'POST'
+    });
+    if (!res.ok) throw new Error('Failed to get debrief');
+    return res.json();
+}
+
+// ============ UI Rendering ============
+
+function renderThemes(themes) {
+    elements.themesGrid.innerHTML = '';
+    
+    Object.entries(themes).forEach(([theme, count]) => {
+        const card = document.createElement('div');
+        card.className = 'theme-card';
+        card.innerHTML = `
+            <h4>${theme}</h4>
+            <span class="count">${count} questions</span>
+        `;
+        card.onclick = () => handleThemeSelect(theme);
+        elements.themesGrid.appendChild(card);
+    });
+}
+
+function renderQuestions(questions) {
+    elements.questionsList.innerHTML = '';
+    
+    questions.forEach(question => {
+        const item = document.createElement('div');
+        item.className = 'question-item';
+        item.textContent = question;
+        item.onclick = () => handleQuestionSelect(question);
+        elements.questionsList.appendChild(item);
+    });
+}
+
+function renderDebrief(debrief) {
+    let html = '';
+    
+    // Points forts
+    if (debrief.points_forts && debrief.points_forts.length > 0) {
+        html += `
+            <div class="debrief-section strengths">
+                <h3>✓ Points forts</h3>
+                ${debrief.points_forts.map(p => `
+                    <div class="debrief-item">
+                        <h4>${p.titre}</h4>
+                        <p>${p.detail}</p>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    // Points à améliorer
+    if (debrief.points_amelioration && debrief.points_amelioration.length > 0) {
+        html += `
+            <div class="debrief-section improvements">
+                <h3>⚡ Points à améliorer</h3>
+                ${debrief.points_amelioration.map(p => `
+                    <div class="debrief-item">
+                        <h4>${p.titre}</h4>
+                        <p>${p.detail}</p>
+                        ${p.conseil ? `<p class="conseil">💡 ${p.conseil}</p>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    // Note globale
+    if (debrief.note_globale) {
+        html += `
+            <div class="debrief-section score">
+                <h3>📊 Note globale</h3>
+                <div class="score-display">
+                    <span class="score-number">${debrief.note_globale.score}</span>
+                    <p class="score-comment">${debrief.note_globale.commentaire}</p>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Prochain objectif
+    if (debrief.prochain_objectif) {
+        html += `
+            <div class="next-objective">
+                <h4>🎯 Pour ta prochaine session</h4>
+                <p>${debrief.prochain_objectif}</p>
+            </div>
+        `;
+    }
+    
+    elements.debriefContent.innerHTML = html;
 }
 
 // ============ Event Handlers ============
 
-// File Upload
-if (elements.dossierInput) {
-elements.dossierInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) {
-        state.dossierFile = file;
-        elements.dossierStatus.textContent = file.name;
-        elements.dossierZone.classList.add('has-file');
-        elements.uploadBtn.disabled = false;
-    } else {
-        elements.uploadBtn.disabled = true;
-    }
-});
-}
-
-if (elements.uploadForm) {
-elements.uploadForm.addEventListener('submit', async (e) => {
+async function handleUpload(e) {
     e.preventDefault();
+    
+    const file = elements.dossierInput.files[0];
+    if (!file) return;
     
     showLoading('Analyse de ton dossier...');
     
     try {
-        const result = await uploadDossier();
-        
+        const result = await uploadDossier(file);
         state.dossierText = result._dossier_text;
-        state.questionsList = result._questions_list;
-            state.questionsCount = result.questions_count;
-        
-        elements.questionsCount.textContent = result.questions_count;
-        elements.uploadPreview.style.display = 'block';
         
         hideLoading();
+        showStep('stepMode');
+    } catch (error) {
+        hideLoading();
+        showToast(error.message);
+    }
+}
+
+async function handleModeSelect(mode) {
+    state.mode = mode;
+    
+    showLoading('Préparation de ta session...');
+    
+    try {
+        // Create session
+        const sessionResult = await createSession(mode, state.dossierText);
+        state.sessionId = sessionResult.session_id;
         
-        setTimeout(() => {
-            showStep(elements.stepMode);
-            }, 800);
+        // Initialize microphone
+        const micReady = await initMediaRecorder();
+        if (!micReady) {
+            hideLoading();
+            return;
+        }
+        
+        if (mode === 'question_by_question') {
+            // Load themes and show theme selection
+            const themesResult = await getThemes();
+            state.themes = themesResult.themes;
+            renderThemes(state.themes);
+            
+            hideLoading();
+            showStep('stepThemes');
+        } else {
+            // Full interview mode - start directly
+            const introResult = await getSessionIntro();
+            
+            state.transcript.push({ role: 'assistant', content: introResult.text });
+            elements.coachText.textContent = introResult.text;
+            
+            hideLoading();
+            showStep('stepInterview');
+            
+            await playAudioBase64(introResult.audio_base64);
+        }
+        } catch (error) {
+            hideLoading();
+            showToast(error.message);
+        }
+}
+
+async function handleThemeSelect(theme) {
+    state.currentTheme = theme;
+    
+    showLoading('Chargement des questions...');
+    
+    try {
+        const result = await selectTheme(theme);
+        state.currentQuestions = result.available_questions;
+        
+        elements.selectedThemeTitle.textContent = theme;
+        renderQuestions(state.currentQuestions);
+            
+            hideLoading();
+        showStep('stepQuestions');
+        
+        // Play coach response
+        state.transcript.push({ role: 'assistant', content: result.text });
+        await playAudioBase64(result.audio_base64);
         
     } catch (error) {
         hideLoading();
         showToast(error.message);
     }
-});
 }
 
-// Mode Selection
-elements.modeCards.forEach(card => {
-    card.addEventListener('click', async () => {
-        elements.modeCards.forEach(c => c.classList.remove('selected'));
-        card.classList.add('selected');
-        
-        const mode = card.dataset.mode;
-        state.mode = mode;
-        
-        showLoading('Connexion au coach IA...');
-        
-        try {
-            const audioReady = await initAudio();
-            if (!audioReady) {
-            hideLoading();
-                return;
-            }
-            
-            const result = await prepareSession(mode);
-            state.sessionId = result.session_id;
-            
-            connectWebSocket();
-            
-        } catch (error) {
-            hideLoading();
-            showToast(error.message);
-        }
-    });
-});
-
-// Voice Button - Toggle (click to start/stop)
-if (elements.voiceBtn) {
-elements.voiceBtn.addEventListener('click', () => {
-        if (!state.isConnected) {
-            showToast('Non connecté au serveur');
-        return;
-    }
-    toggleRecording();
-});
-}
-
-// End Session
-if (elements.endSessionBtn) {
-    elements.endSessionBtn.addEventListener('click', async () => {
-        if (confirm('Terminer la session ?')) {
-            disconnectWebSocket();
-            showSummary();
-        }
-    });
-}
-
-function showSummary() {
-    // Format transcript for summary
-    let summaryHtml = '';
+async function handleQuestionSelect(question) {
+    showLoading('Préparation de la question...');
     
-    if (state.transcript.length === 0) {
-        summaryHtml = '<p class="no-transcript">Aucun échange enregistré.</p>';
+    try {
+        const result = await selectQuestion(question, false);
+        
+        if (!result.success) {
+            hideLoading();
+            showToast(result.message);
+            return;
+        }
+        
+        state.currentQuestion = result.question;
+        elements.coachText.textContent = result.text;
+        state.transcript.push({ role: 'assistant', content: result.text });
+        
+        hideLoading();
+        showStep('stepInterview');
+        
+        await playAudioBase64(result.audio_base64);
+        
+    } catch (error) {
+        hideLoading();
+        showToast(error.message);
+    }
+}
+
+async function handleRandomQuestion() {
+    showLoading('Tirage d\'une question...');
+    
+    try {
+        const result = await selectQuestion(null, true);
+        
+        if (!result.success) {
+            hideLoading();
+            showToast(result.message);
+            showStep('stepThemes');
+            return;
+        }
+        
+        state.currentQuestion = result.question;
+        elements.coachText.textContent = result.text;
+        state.transcript.push({ role: 'assistant', content: result.text });
+        
+        hideLoading();
+        showStep('stepInterview');
+        
+        await playAudioBase64(result.audio_base64);
+        
+    } catch (error) {
+        hideLoading();
+        showToast(error.message);
+    }
+}
+
+async function handleSkipQuestion() {
+    if (state.mode === 'question_by_question') {
+        showStep('stepQuestions');
     } else {
-        summaryHtml = '<div class="transcript-list">';
-        state.transcript.forEach(item => {
-            const role = item.role === 'assistant' ? 'Coach' : 'Vous';
-            const roleClass = item.role === 'assistant' ? 'coach' : 'user';
-            summaryHtml += `
-                <div class="transcript-item ${roleClass}">
-                    <span class="transcript-role">${role}</span>
-                    <p class="transcript-text">${item.text}</p>
-                </div>
-            `;
-        });
-        summaryHtml += '</div>';
+        // In full interview, skip just gets next question
+        await handleRandomQuestion();
     }
-    
-    elements.summaryContent.innerHTML = summaryHtml;
-        showStep(elements.stepSummary);
 }
 
-// Download Transcript
-if (elements.downloadTranscript) {
-    elements.downloadTranscript.addEventListener('click', () => {
-        let text = '=== X-HEC Interview Coach - Transcript ===\n\n';
-        text += `Date: ${new Date().toLocaleDateString('fr-FR')}\n`;
-        text += `Mode: ${state.mode === 'question_by_question' ? 'Question par Question' : 'Simulation 20 min'}\n\n`;
-        text += '---\n\n';
+async function handleEndSession() {
+    showLoading('Génération du débrief...');
+    
+    try {
+        const result = await getDebrief();
         
-        state.transcript.forEach(item => {
-            const role = item.role === 'assistant' ? 'Coach' : 'Vous';
-            text += `[${role}]\n${item.text}\n\n`;
-        });
+        renderDebrief(result.debrief);
         
-        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        hideLoading();
+        showStep('stepDebrief');
+        
+        // Play summary audio
+        await playAudioBase64(result.audio_base64);
+        
+    } catch (error) {
+        hideLoading();
+        showToast(error.message);
+    }
+}
+
+function handleDownloadTranscript() {
+    let text = '=== X-HEC Interview Coach - Transcript ===\n\n';
+    text += `Date: ${new Date().toLocaleDateString('fr-FR')}\n`;
+    text += `Mode: ${state.mode === 'question_by_question' ? 'Question par Question' : 'Simulation 20 min'}\n\n`;
+    text += '---\n\n';
+    
+    state.transcript.forEach(item => {
+        const role = item.role === 'assistant' ? 'Coach' : 'Vous';
+        text += `[${role}]\n${item.content}\n\n`;
+    });
+    
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -519,43 +636,79 @@ if (elements.downloadTranscript) {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-    });
     }
 
-// New Session
-if (elements.newSession) {
-elements.newSession.addEventListener('click', () => {
-    state.dossierFile = null;
-    state.dossierText = '';
-    state.questionsList = [];
+function handleNewSession() {
+    // Reset state
     state.sessionId = null;
     state.mode = null;
-        state.transcript = [];
-        state.audioQueue = [];
-        
-        if (state.mediaStream) {
-            state.mediaStream.getTracks().forEach(track => track.stop());
-            state.mediaStream = null;
-        }
-        if (state.audioContext) {
-            state.audioContext.close();
-            state.audioContext = null;
-        }
-        
-        elements.dossierStatus.textContent = 'Glisse ton fichier ici';
-    elements.dossierZone.classList.remove('has-file');
+    state.dossierText = '';
+    state.themes = {};
+    state.currentTheme = null;
+    state.currentQuestions = [];
+    state.currentQuestion = null;
+    state.transcript = [];
+    
+    // Stop media recorder
+    if (state.mediaRecorder && state.mediaRecorder.stream) {
+        state.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+    }
+    state.mediaRecorder = null;
+    
+    // Reset UI
     elements.dossierInput.value = '';
+    elements.dossierZone.classList.remove('has-file');
+    elements.dossierStatus.textContent = 'Dépose ton dossier de candidature';
     elements.uploadBtn.disabled = true;
-    elements.uploadPreview.style.display = 'none';
     elements.modeCards.forEach(c => c.classList.remove('selected'));
     
-    showStep(elements.stepUpload);
-});
+    showStep('stepUpload');
 }
+
+// ============ Event Listeners ============
+
+// Upload
+elements.dossierInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        elements.dossierStatus.textContent = file.name;
+        elements.dossierZone.classList.add('has-file');
+        elements.uploadBtn.disabled = false;
+    }
+});
+
+elements.uploadForm.addEventListener('submit', handleUpload);
+
+// Mode selection
+elements.modeCards.forEach(card => {
+    card.addEventListener('click', () => {
+        elements.modeCards.forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        handleModeSelect(card.dataset.mode);
+    });
+});
+
+// Navigation buttons
+elements.backToMode.addEventListener('click', () => showStep('stepMode'));
+elements.backToThemes.addEventListener('click', () => showStep('stepThemes'));
+
+// Questions
+elements.randomQuestionBtn.addEventListener('click', handleRandomQuestion);
+
+// Voice circle - toggle recording
+elements.voiceCircle.addEventListener('click', toggleRecording);
+
+// Interview controls
+elements.skipQuestionBtn.addEventListener('click', handleSkipQuestion);
+elements.endSessionBtn.addEventListener('click', handleEndSession);
+
+// Debrief
+elements.downloadTranscript.addEventListener('click', handleDownloadTranscript);
+elements.newSession.addEventListener('click', handleNewSession);
 
 // ============ Initialization ============
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎯 X-HEC Interview Coach v2.1');
-    showStep(elements.stepUpload);
+    console.log('🎯 X-HEC Interview Coach v3.0');
+    showStep('stepUpload');
 });

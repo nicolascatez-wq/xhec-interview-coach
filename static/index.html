@@ -7,16 +7,16 @@
     <link rel="stylesheet" href="/static/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="app">
         <!-- Step 1: Upload -->
         <section class="step step-upload" id="stepUpload">
-            <div class="upload-container">
-                <div class="upload-header">
+            <div class="container">
+                <div class="header">
                     <h1>X-HEC Coach</h1>
-                    <p>Entraîne-toi pour ton entretien</p>
+                    <p class="subtitle">Prépare ton entretien avec un coach IA exigeant</p>
                 </div>
                 
                 <form id="uploadForm" class="upload-form">
@@ -24,26 +24,21 @@
                         <input type="file" id="dossierInput" accept=".pdf" required>
                         <label for="dossierInput" class="upload-label">
                             <div class="upload-icon">
-                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                    <polyline points="17 8 12 3 7 8"/>
-                                    <line x1="12" y1="3" x2="12" y2="15"/>
+                                <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                    <polyline points="14 2 14 8 20 8"/>
+                                    <line x1="12" y1="18" x2="12" y2="12"/>
+                                    <line x1="9" y1="15" x2="12" y2="12"/>
+                                    <line x1="15" y1="15" x2="12" y2="12"/>
                                 </svg>
                             </div>
-                            <span class="upload-text" id="dossierStatus">Glisse ton fichier ici</span>
-                            <span class="upload-hint">ou clique pour sélectionner (PDF)</span>
+                            <span class="upload-text" id="dossierStatus">Dépose ton dossier de candidature</span>
+                            <span class="upload-hint">PDF uniquement</span>
                         </label>
                     </div>
                     
-                    <div class="upload-preview" id="uploadPreview" style="display: none;">
-                        <div class="preview-badge">
-                            <span class="check">✓</span>
-                            <span><span id="questionsCount">0</span> questions prêtes</span>
-                        </div>
-                    </div>
-                    
-                    <button type="submit" class="btn-primary" id="uploadBtn" disabled>
-                        Continuer
+                    <button type="submit" class="btn btn-primary btn-large" id="uploadBtn" disabled>
+                        Commencer l'entraînement
                     </button>
                 </form>
             </div>
@@ -51,68 +46,115 @@
 
         <!-- Step 2: Mode Selection -->
         <section class="step step-mode" id="stepMode" style="display: none;">
-            <div class="mode-container">
-                <div class="mode-header">
-                    <h2>Choisis ton mode</h2>
+            <div class="container">
+                <div class="header">
+                    <h2>Choisis ton entraînement</h2>
                 </div>
                 
-                <div class="mode-cards">
+                <div class="mode-grid">
                     <div class="mode-card" data-mode="question_by_question">
-                        <div class="mode-icon">🎯</div>
+                        <div class="mode-badge">Recommandé</div>
                         <h3>Question par Question</h3>
-                        <p>Feedback immédiat après chaque réponse</p>
+                        <p>L'IA te propose des thèmes, tu choisis ta question, et tu reçois un feedback immédiat après chaque réponse.</p>
+                        <ul class="mode-features">
+                            <li>Choix du thème et de la question</li>
+                            <li>Feedback détaillé après chaque réponse</li>
+                            <li>Avance à ton rythme</li>
+                        </ul>
                     </div>
                     
                     <div class="mode-card" data-mode="full_interview">
-                        <div class="mode-icon">⏱</div>
                         <h3>Simulation 20 min</h3>
-                        <p>Entretien complet avec debrief à la fin</p>
+                        <p>Un vrai entretien sans interruption. Les questions s'enchaînent et tu reçois un débrief complet à la fin.</p>
+                        <ul class="mode-features">
+                            <li>Conditions réelles d'entretien</li>
+                            <li>Pas d'interruption</li>
+                            <li>Débrief global à la fin</li>
+                        </ul>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- Step 3: Interview -->
+        <!-- Step 3: Theme Selection (Question by Question mode) -->
+        <section class="step step-themes" id="stepThemes" style="display: none;">
+            <div class="container">
+                <div class="header">
+                    <h2>Sur quoi veux-tu travailler ?</h2>
+                    <p class="subtitle">Choisis un thème de questions</p>
+                </div>
+                
+                <div class="themes-grid" id="themesGrid">
+                    <!-- Themes loaded dynamically -->
+                </div>
+                
+                <button class="btn btn-secondary" id="backToMode">← Changer de mode</button>
+            </div>
+        </section>
+
+        <!-- Step 4: Question Selection -->
+        <section class="step step-questions" id="stepQuestions" style="display: none;">
+            <div class="container">
+                <div class="header">
+                    <h2 id="selectedThemeTitle">Thème sélectionné</h2>
+                </div>
+                
+                <div class="questions-actions">
+                    <button class="btn btn-primary" id="randomQuestionBtn">
+                        Question au hasard
+                    </button>
+                    <span class="or-divider">ou choisis ci-dessous</span>
+                </div>
+                
+                <div class="questions-list" id="questionsList">
+                    <!-- Questions loaded dynamically -->
+                </div>
+                
+                <button class="btn btn-secondary" id="backToThemes">← Changer de thème</button>
+            </div>
+        </section>
+
+        <!-- Step 5: Interview / Voice Interaction -->
         <section class="step step-interview" id="stepInterview" style="display: none;">
             <div class="interview-container">
-                <!-- Voice Blob Visualization -->
-                <div class="voice-blob-container">
-                    <div class="voice-blob idle" id="voiceBlob">
-                        <div class="blob-inner"></div>
-                    </div>
+                <!-- Coach Message -->
+                <div class="coach-message" id="coachMessage">
+                    <p id="coachText">...</p>
                 </div>
                 
-                <!-- Status Text -->
-                <p class="status-text" id="statusText">Connexion...</p>
+                <!-- Voice Circle -->
+                <div class="voice-circle-container" id="voiceCircleContainer">
+                    <div class="voice-circle" id="voiceCircle">
+                        <div class="circle-inner"></div>
+                        <div class="circle-pulse"></div>
+                    </div>
+                    <p class="voice-status" id="voiceStatus">Clique pour répondre</p>
+                </div>
                 
-                <!-- Mic Button -->
-                <button class="mic-btn" id="voiceBtn">
-                    <span class="mic-icon">🎤</span>
-                </button>
-                
-                <!-- End Button -->
-                <button class="end-btn" id="endSessionBtn">
-                    Terminer
-                </button>
+                <!-- Controls -->
+                <div class="interview-controls">
+                    <button class="btn btn-ghost" id="skipQuestionBtn">Passer cette question</button>
+                    <button class="btn btn-secondary" id="endSessionBtn">Terminer et voir le débrief</button>
+                </div>
             </div>
         </section>
 
-        <!-- Step 4: Summary -->
-        <section class="step step-summary" id="stepSummary" style="display: none;">
-            <div class="summary-container">
-                <div class="summary-header">
-                    <h2>Session terminée</h2>
+        <!-- Step 6: Debrief -->
+        <section class="step step-debrief" id="stepDebrief" style="display: none;">
+            <div class="container debrief-container">
+                <div class="header">
+                    <h2>Ton Débrief</h2>
                 </div>
                 
-                <div class="summary-content" id="summaryContent">
-                    <p>Chargement...</p>
+                <div class="debrief-content" id="debriefContent">
+                    <!-- Debrief loaded dynamically -->
                 </div>
                 
-                <div class="summary-actions">
-                    <button class="btn-secondary" id="downloadTranscript">
+                <div class="debrief-actions">
+                    <button class="btn btn-secondary" id="downloadTranscript">
                         Télécharger le transcript
                     </button>
-                    <button class="btn-primary" id="newSession">
+                    <button class="btn btn-primary" id="newSession">
                         Nouvelle session
                     </button>
                 </div>
@@ -130,6 +172,9 @@
     <div class="toast" id="toast" style="display: none;">
         <span class="toast-message" id="toastMessage"></span>
     </div>
+
+    <!-- Audio Player (hidden) -->
+    <audio id="audioPlayer" style="display: none;"></audio>
 
     <script src="/static/app.js"></script>
 </body>

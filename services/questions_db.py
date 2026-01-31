@@ -1,22 +1,26 @@
 """
 Questions database - Pre-loaded interview questions for X-HEC.
 Questions are loaded from an Excel file in the data folder.
+Includes AI-powered theme categorization.
 """
 
-import io
+import json
 from pathlib import Path
 from typing import List, Dict, Optional
 import pandas as pd
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 QUESTIONS_FILE = DATA_DIR / "questions.xlsx"
+THEMES_CACHE_FILE = DATA_DIR / "themes_cache.json"
 
 
 class QuestionsDatabase:
-    """Manages the pre-loaded interview questions."""
+    """Manages the pre-loaded interview questions with theme categorization."""
     
     def __init__(self):
         self.questions: List[Dict] = []
+        self.themes: Dict[str, List[str]] = {}
+        self.themes_loaded = False
         self.load_questions()
     
     def load_questions(self):
@@ -41,19 +45,6 @@ class QuestionsDatabase:
             if question_col is None:
                 question_col = df.columns[0]
             
-            # Find optional columns
-            theme_col = None
-            for col in ['theme', 'thème', 'category', 'categorie']:
-                if col in df.columns:
-                    theme_col = col
-                    break
-            
-            difficulty_col = None
-            for col in ['difficulte', 'difficulté', 'difficulty', 'niveau']:
-                if col in df.columns:
-                    difficulty_col = col
-                    break
-            
             # Build questions list
             self.questions = []
             for _, row in df.iterrows():
@@ -63,17 +54,65 @@ class QuestionsDatabase:
                 
                 question = {
                     "question": q_text,
-                    "theme": str(row[theme_col]).strip() if theme_col and pd.notna(row.get(theme_col)) else "Général",
-                    "difficulty": str(row[difficulty_col]).strip() if difficulty_col and pd.notna(row.get(difficulty_col)) else "Moyen"
+                    "theme": "Non catégorisé",
+                    "difficulty": "Moyen"
                 }
                 self.questions.append(question)
             
             print(f"✅ Loaded {len(self.questions)} questions from database")
             
+            # Try to load cached themes
+            self._load_themes_cache()
+            
         except Exception as e:
             print(f"⚠️ Error loading questions: {e}")
             print("   Using default questions...")
             self.questions = self._get_default_questions()
+    
+    def _load_themes_cache(self):
+        """Load themes from cache file if available."""
+        if THEMES_CACHE_FILE.exists():
+            try:
+                with open(THEMES_CACHE_FILE, 'r', encoding='utf-8') as f:
+                    self.themes = json.load(f)
+                self.themes_loaded = True
+                print(f"✅ Loaded {len(self.themes)} themes from cache")
+            except Exception as e:
+                print(f"⚠️ Could not load themes cache: {e}")
+    
+    def _save_themes_cache(self):
+        """Save themes to cache file."""
+        try:
+            with open(THEMES_CACHE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.themes, f, ensure_ascii=False, indent=2)
+            print(f"✅ Saved themes cache")
+        except Exception as e:
+            print(f"⚠️ Could not save themes cache: {e}")
+    
+    async def categorize_with_ai(self):
+        """Use AI to categorize questions into themes."""
+        from services.openai_services import categorize_questions
+        
+        all_questions = self.get_all_questions()
+        if not all_questions:
+            return
+        
+        print("🤖 Categorizing questions with AI...")
+        try:
+            self.themes = await categorize_questions(all_questions)
+            self.themes_loaded = True
+            self._save_themes_cache()
+            print(f"✅ Questions categorized into {len(self.themes)} themes")
+        except Exception as e:
+            print(f"⚠️ AI categorization failed: {e}")
+            self._use_default_themes()
+    
+    def _use_default_themes(self):
+        """Fallback to basic theme grouping."""
+        self.themes = {
+            "Questions générales": self.get_all_questions()
+        }
+        self.themes_loaded = True
     
     def _get_default_questions(self) -> List[Dict]:
         """Return default questions if Excel file is not available."""
@@ -96,9 +135,17 @@ class QuestionsDatabase:
         """Get all questions as a simple list of strings."""
         return [q["question"] for q in self.questions]
     
+    def get_themes(self) -> List[str]:
+        """Get all available themes."""
+        return list(self.themes.keys())
+    
     def get_questions_by_theme(self, theme: str) -> List[str]:
-        """Get questions filtered by theme."""
-        return [q["question"] for q in self.questions if q["theme"].lower() == theme.lower()]
+        """Get questions for a specific theme."""
+        return self.themes.get(theme, [])
+    
+    def get_themes_with_counts(self) -> Dict[str, int]:
+        """Get themes with question counts."""
+        return {theme: len(questions) for theme, questions in self.themes.items()}
     
     def get_random_questions(self, count: int = 10) -> List[str]:
         """Get a random selection of questions."""
@@ -111,6 +158,10 @@ class QuestionsDatabase:
     def get_questions_count(self) -> int:
         """Get the total number of questions."""
         return len(self.questions)
+    
+    def has_themes(self) -> bool:
+        """Check if themes have been loaded."""
+        return self.themes_loaded and len(self.themes) > 0
 
 
 # Global instance

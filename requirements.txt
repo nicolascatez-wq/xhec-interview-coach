@@ -1,5 +1,5 @@
-# X-HEC Interview Coach v2.0
-# OpenAI Realtime API + FastAPI
+# X-HEC Interview Coach v3.0
+# Sequential Flow: Whisper + GPT-4 + TTS
 
 # Web framework
 fastapi
@@ -7,9 +7,8 @@ uvicorn[standard]
 python-multipart
 aiofiles
 
-# OpenAI
+# OpenAI (Whisper, GPT-4, TTS)
 openai
-websockets
 
 # File parsing
 PyPDF2
