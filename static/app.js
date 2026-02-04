@@ -355,10 +355,6 @@ async function selectTheme(theme) {
 }
 
 async function selectQuestion(question = null, random = false) {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:selectQuestion:entry',message:'Calling selectQuestion',data:{question:question,random:random,sessionId:state.sessionId,currentTheme:state.currentTheme},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,C'})}).catch(()=>{});
-    // #endregion
-    
     const formData = new FormData();
     if (question) formData.append('question', question);
     formData.append('random', random.toString());
@@ -368,12 +364,10 @@ async function selectQuestion(question = null, random = false) {
         body: formData
     });
     
-    // #region agent log
-    const resText = await res.clone().text();
-    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:selectQuestion:response',message:'API response',data:{ok:res.ok,status:res.status,body:resText},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,D,E'})}).catch(()=>{});
-    // #endregion
-    
-    if (!res.ok) throw new Error('Failed to select question');
+    if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `Error ${res.status}`);
+    }
     return res.json();
 }
 
