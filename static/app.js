@@ -131,7 +131,7 @@ function setVoiceState(newState) {
 function updateNextQuestionButton() {
     if (state.hasAnsweredCurrentQuestion) {
         elements.nextQuestionBtn.textContent = 'Question suivante';
-    } else {
+            } else {
         elements.nextQuestionBtn.textContent = 'Passer cette question';
     }
 }
@@ -352,17 +352,25 @@ async function selectTheme(theme) {
     
     if (!res.ok) throw new Error('Failed to select theme');
     return res.json();
-}
-
+    }
+    
 async function selectQuestion(question = null, random = false) {
     const formData = new FormData();
     if (question) formData.append('question', question);
     formData.append('random', random.toString());
     
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:selectQuestion',message:'Calling API',data:{question:question,random:random,sessionId:state.sessionId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+    
     const res = await fetch(`/api/session/${state.sessionId}/select-question`, {
         method: 'POST',
         body: formData
     });
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:selectQuestion',message:'API response status',data:{ok:res.ok,status:res.status},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
     
     if (!res.ok) throw new Error('Failed to select question');
     return res.json();
@@ -533,10 +541,10 @@ async function handleModeSelect(mode) {
             
             await playAudioBase64(introResult.audio_base64);
         }
-    } catch (error) {
-        hideLoading();
-        showToast(error.message);
-    }
+        } catch (error) {
+            hideLoading();
+            showToast(error.message);
+        }
 }
 
 async function handleThemeSelect(theme) {
@@ -545,14 +553,17 @@ async function handleThemeSelect(theme) {
     showLoading('Chargement des questions...');
     
     try {
+        // Set theme on backend session (IMPORTANT: must be called before selectQuestion)
+        await selectTheme(theme);
+        
         // Get available questions for this theme
         const questionsResult = await getThemeQuestions(theme);
         state.currentQuestions = questionsResult.questions;
         
         elements.selectedThemeTitle.textContent = theme;
         renderQuestions(state.currentQuestions);
-        
-        hideLoading();
+            
+            hideLoading();
         showStep('stepQuestions');
         
     } catch (error) {
@@ -564,8 +575,16 @@ async function handleThemeSelect(theme) {
 async function handleQuestionSelect(question) {
     showLoading('Préparation de la question...');
     
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:handleQuestionSelect',message:'Starting question select',data:{question:question,sessionId:state.sessionId,currentTheme:state.currentTheme},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
+    // #endregion
+    
     try {
         const result = await selectQuestion(question, false);
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:handleQuestionSelect',message:'selectQuestion result',data:{result:result},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C,D'})}).catch(()=>{});
+        // #endregion
         
         if (!result.success) {
             hideLoading();
@@ -688,15 +707,15 @@ function handleDownloadTranscript() {
     });
     
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `xhec-interview-${new Date().toISOString().split('T')[0]}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-}
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `xhec-interview-${new Date().toISOString().split('T')[0]}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
 
 function handleNewSession() {
     // Reset state

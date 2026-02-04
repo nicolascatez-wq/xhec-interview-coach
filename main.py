@@ -284,15 +284,29 @@ async def select_theme(session_id: str, theme: str = Form(...)):
 @app.post("/api/session/{session_id}/select-question")
 async def select_question(session_id: str, question: Optional[str] = Form(None), random: bool = Form(False)):
     """Select a specific question or get a random one."""
+    # Debug logging
+    import json as _json
+    _log_path = "/Users/nicolas.catez/Desktop/Alan Apps/alan-apps/Mistral API/.cursor/debug.log"
+    def _debug_log(msg, data, hyp):
+        with open(_log_path, "a") as f:
+            f.write(_json.dumps({"location":"main.py:select_question","message":msg,"data":data,"hypothesisId":hyp,"timestamp":__import__('time').time()}) + "\n")
+    
+    _debug_log("Endpoint called", {"session_id": session_id, "question": question, "random": random}, "A,B")
+    
     session = _sessions.get(session_id)
     if not session:
+        _debug_log("Session not found", {"session_id": session_id, "available_sessions": list(_sessions.keys())}, "A")
         raise HTTPException(404, "Session non trouvée")
     
+    _debug_log("Session found", {"current_theme": session.current_theme, "asked_questions": session.asked_questions}, "A,B")
+    
     if not session.current_theme:
+        _debug_log("No current_theme", {"session_id": session_id}, "A,B")
         raise HTTPException(400, "Sélectionne d'abord un thème")
     
     db = get_questions_db()
     available = [q for q in db.get_questions_by_theme(session.current_theme) if q not in session.asked_questions]
+    _debug_log("Available questions", {"theme": session.current_theme, "available_count": len(available)}, "C")
     
     if not available:
         return {
