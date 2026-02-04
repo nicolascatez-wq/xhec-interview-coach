@@ -352,16 +352,16 @@ async function selectTheme(theme) {
     
     if (!res.ok) throw new Error('Failed to select theme');
     return res.json();
-    }
-    
+}
+
 async function selectQuestion(question = null, random = false) {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:selectQuestion:entry',message:'Calling selectQuestion',data:{question:question,random:random,sessionId:state.sessionId,currentTheme:state.currentTheme},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,C'})}).catch(()=>{});
+    // #endregion
+    
     const formData = new FormData();
     if (question) formData.append('question', question);
     formData.append('random', random.toString());
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:selectQuestion',message:'Calling API',data:{question:question,random:random,sessionId:state.sessionId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
     
     const res = await fetch(`/api/session/${state.sessionId}/select-question`, {
         method: 'POST',
@@ -369,7 +369,8 @@ async function selectQuestion(question = null, random = false) {
     });
     
     // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:selectQuestion',message:'API response status',data:{ok:res.ok,status:res.status},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
+    const resText = await res.clone().text();
+    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:selectQuestion:response',message:'API response',data:{ok:res.ok,status:res.status,body:resText},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,D,E'})}).catch(()=>{});
     // #endregion
     
     if (!res.ok) throw new Error('Failed to select question');
@@ -550,10 +551,14 @@ async function handleModeSelect(mode) {
 async function handleThemeSelect(theme) {
     state.currentTheme = theme;
     
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:handleThemeSelect',message:'Theme selected',data:{theme:theme,sessionId:state.sessionId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    
     showLoading('Chargement des questions...');
     
     try {
-        // Set theme on backend session (IMPORTANT: must be called before selectQuestion)
+        // Set theme on backend session (REQUIRED for select-question to work)
         await selectTheme(theme);
         
         // Get available questions for this theme
@@ -575,16 +580,8 @@ async function handleThemeSelect(theme) {
 async function handleQuestionSelect(question) {
     showLoading('Préparation de la question...');
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:handleQuestionSelect',message:'Starting question select',data:{question:question,sessionId:state.sessionId,currentTheme:state.currentTheme},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
-    // #endregion
-    
     try {
         const result = await selectQuestion(question, false);
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:handleQuestionSelect',message:'selectQuestion result',data:{result:result},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C,D'})}).catch(()=>{});
-        // #endregion
         
         if (!result.success) {
             hideLoading();
