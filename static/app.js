@@ -352,8 +352,8 @@ async function selectTheme(theme) {
     
     if (!res.ok) throw new Error('Failed to select theme');
     return res.json();
-}
-
+    }
+    
 async function selectQuestion(question = null, random = false) {
     const formData = new FormData();
     if (question) formData.append('question', question);
@@ -545,18 +545,18 @@ async function handleModeSelect(mode) {
 async function handleThemeSelect(theme) {
     state.currentTheme = theme;
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/d712d6a5-4cbe-4e45-9537-f408a7e04dec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:handleThemeSelect',message:'Theme selected',data:{theme:theme,sessionId:state.sessionId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
-    
     showLoading('Chargement des questions...');
     
     try {
+        console.log('[DEBUG] Calling selectTheme...');
         // Set theme on backend session (REQUIRED for select-question to work)
         await selectTheme(theme);
+        console.log('[DEBUG] selectTheme completed');
         
         // Get available questions for this theme
+        console.log('[DEBUG] Calling getThemeQuestions...');
         const questionsResult = await getThemeQuestions(theme);
+        console.log('[DEBUG] getThemeQuestions completed');
         state.currentQuestions = questionsResult.questions;
         
         elements.selectedThemeTitle.textContent = theme;
@@ -575,7 +575,9 @@ async function handleQuestionSelect(question) {
     showLoading('Préparation de la question...');
     
     try {
+        console.log('[DEBUG] Calling selectQuestion with:', question);
         const result = await selectQuestion(question, false);
+        console.log('[DEBUG] selectQuestion result:', result);
         
         if (!result.success) {
             hideLoading();
