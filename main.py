@@ -284,24 +284,9 @@ async def select_theme(session_id: str, theme: str = Form(...)):
 @app.post("/api/session/{session_id}/select-question")
 async def select_question(session_id: str, question: Optional[str] = Form(None), random: bool = Form(False)):
     """Select a specific question or get a random one."""
-    # #region agent log
-    import json as _json
-    with open('/Users/nicolas.catez/Desktop/Alan Apps/alan-apps/Mistral API/.cursor/debug.log', 'a') as _f:
-        _f.write(_json.dumps({"location":"main.py:select_question:entry","message":"Endpoint called","data":{"session_id":session_id,"question":question,"random":random},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session","hypothesisId":"B,C"})+'\n')
-    # #endregion
-    
     session = _sessions.get(session_id)
     if not session:
-        # #region agent log
-        with open('/Users/nicolas.catez/Desktop/Alan Apps/alan-apps/Mistral API/.cursor/debug.log', 'a') as _f:
-            _f.write(_json.dumps({"location":"main.py:select_question:no_session","message":"Session not found","data":{"session_id":session_id,"available_sessions":list(_sessions.keys())},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session","hypothesisId":"B"})+'\n')
-        # #endregion
         raise HTTPException(404, "Session non trouvée")
-    
-    # #region agent log
-    with open('/Users/nicolas.catez/Desktop/Alan Apps/alan-apps/Mistral API/.cursor/debug.log', 'a') as _f:
-        _f.write(_json.dumps({"location":"main.py:select_question:session_found","message":"Session state","data":{"current_theme":session.current_theme,"mode":session.mode},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session","hypothesisId":"A,D"})+'\n')
-    # #endregion
     
     if not session.current_theme:
         raise HTTPException(400, "Sélectionne d'abord un thème")
