@@ -313,24 +313,44 @@ async def select_question(session_id: str, question: Optional[str] = Form(None),
     session.current_question = question
     session.asked_questions.append(question)
     
-    # Generate coach asking the question
-    intro = await select_next_question(
-        session.current_theme,
-        available,
-        session.asked_questions[:-1],  # Exclude current
-        session.transcript[-2:] if len(session.transcript) >= 2 else None
-    )
-    
-    session.transcript.append({"role": "assistant", "content": intro})
-    
-    audio_bytes = await text_to_speech(intro)
-    
-    return {
-        "success": True,
-        "question": question,
-        "text": intro,
-        "audio_base64": __import__('base64').b64encode(audio_bytes).decode('utf-8')
-    }
+    try:
+        # Build last_exchange context from previous Q&A if available
+        last_exchange = None
+        if len(session.asked_questions) >= 2:
+            prev_question = session.asked_questions[-2]
+            # Find last user response in transcript
+            for item in reversed(session.transcript):
+                if item["role"] == "user":
+                    last_exchange = {"question": prev_question, "response": item["content"]}
+                    break
+        
+        # Generate coach asking the question
+        intro = await select_next_question(
+            session.current_theme,
+            available,
+            session.asked_questions[:-1],  # Exclude current
+            last_exchange
+        )
+        
+        # Fallback if select_next_question returns None
+        if not intro:
+            intro = question
+        
+        session.transcript.append({"role": "assistant", "content": intro})
+        
+        audio_bytes = await text_to_speech(intro)
+        
+        return {
+            "success": True,
+            "question": question,
+            "text": intro,
+            "audio_base64": __import__('base64').b64encode(audio_bytes).decode('utf-8')
+        }
+    except Exception as e:
+        print(f"❌ Error in select_question: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Erreur lors de la sélection: {type(e).__name__}: {str(e)}")
 
 
 # ============ Audio/Chat Routes ============
